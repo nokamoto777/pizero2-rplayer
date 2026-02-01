@@ -120,6 +120,19 @@ RPLAYER_ALSA_DEVICE=hw:1,0 python3 rplayer.py
 ```
 Use `aplay -l` to find the correct card/device.
 
+### Radiko auth notes
+The working browser-like auth headers are:
+- `x-radiko-app: pc_html5`
+- `x-radiko-app-version: 0.0.1`
+- `x-radiko-device: pc`
+- `x-radiko-user: dummy_user`
+
+The app defaults to these values and uses GET for `https://radiko.jp/v2/api/auth1`.
+If auth1 returns 503, you can pass cookies from a browser session:
+```bash
+RPLAYER_RADIKO_COOKIE="<Cookie header value>" python3 rplayer.py
+```
+
 ### Button pin config
 Defaults in `rplayer.py`:
 - A button: BCM 5
