@@ -394,15 +394,21 @@ class RadikoResolver:
         }
         try:
             res1 = None
-            for url in ("https://radiko.jp/v2/api/auth1_fms", "http://radiko.jp/v2/api/auth1_fms"):
+            token = keylength = keyoffset = None
+            for url in (
+                "https://radiko.jp/v2/api/auth1",
+                "https://radiko.jp/v2/api/auth1_fms",
+                "http://radiko.jp/v2/api/auth1",
+                "http://radiko.jp/v2/api/auth1_fms",
+            ):
                 res1 = requests.post(url, headers=headers, data=b"\r\n", timeout=5)
                 token = res1.headers.get("X-Radiko-AuthToken")
                 keylength = res1.headers.get("X-Radiko-KeyLength")
                 keyoffset = res1.headers.get("X-Radiko-KeyOffset")
                 if token and keylength and keyoffset:
+                    if DEBUG:
+                        print(f"Radiko: auth1 ok ({url})")
                     break
-            else:
-                token = keylength = keyoffset = None
 
             if not (token and keylength and keyoffset):
                 if DEBUG and res1 is not None:
@@ -420,9 +426,20 @@ class RadikoResolver:
             headers2 = dict(headers)
             headers2["X-Radiko-Authtoken"] = token
             headers2["X-Radiko-Partialkey"] = partial
-            res2 = requests.post("https://radiko.jp/v2/api/auth2_fms", headers=headers2, data=b"\r\n")
-            if res2.status_code != 200:
-                if DEBUG:
+            res2 = None
+            for url in (
+                "https://radiko.jp/v2/api/auth2",
+                "https://radiko.jp/v2/api/auth2_fms",
+                "http://radiko.jp/v2/api/auth2",
+                "http://radiko.jp/v2/api/auth2_fms",
+            ):
+                res2 = requests.post(url, headers=headers2, data=b"\r\n", timeout=5)
+                if res2.status_code == 200:
+                    if DEBUG:
+                        print(f"Radiko: auth2 ok ({url})")
+                    break
+            if res2 is None or res2.status_code != 200:
+                if DEBUG and res2 is not None:
                     print(f"Radiko: auth2 failed: {res2.status_code}")
                 return None
 
