@@ -1,0 +1,15 @@
+[Unit]
+Description=Radiko Player
+After=network-online.target mpd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/pizero2-rplayer
+ExecStart=/usr/bin/python3 /home/pi/pizero2-rplayer/rplayer.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

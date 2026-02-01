@@ -1,0 +1,6 @@
+requests
+lxml
+Pillow
+radiko.py
+st7789
+gpiozero
