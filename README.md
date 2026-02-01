@@ -142,6 +142,11 @@ RPLAYER_DEBUG=1 python3 rplayer.py
 ```bash
 RPLAYER_ST7789_ROTATION=0 python3 rplayer.py
 ```
+- If `Radiko: stream_url failed ...` appears, check:
+  - You are inside Japan or using a valid radiko premium environment (radiko is geo-restricted).
+  - System time/timezone are correct (`timedatectl`).
+  - No VPN/proxy is interfering.
+  - As a fallback, set a known `stream_url` manually in `stations.json`.
 - Verify buttons with gpiozero:
 ```bash
 python3 - <<'PY'

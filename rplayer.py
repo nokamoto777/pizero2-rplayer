@@ -209,9 +209,9 @@ class RadikoResolver:
             if DEBUG:
                 print(f"Radiko: stream_url for {station_id} -> {url}")
             return url
-        except Exception:
+        except Exception as exc:
             if DEBUG:
-                print(f"Radiko: stream_url failed for {station_id}")
+                print(f"Radiko: stream_url failed for {station_id}: {exc!r}")
             return None
 
     def on_air_title(self, station_id: str) -> Optional[str]:
@@ -222,9 +222,9 @@ class RadikoResolver:
             on_air = station.get_on_air()
             title = getattr(on_air, "title", "")
             return str(title).strip() or None
-        except Exception:
+        except Exception as exc:
             if DEBUG:
-                print(f"Radiko: on_air failed for {station_id}")
+                print(f"Radiko: on_air failed for {station_id}: {exc!r}")
             return None
 
 
