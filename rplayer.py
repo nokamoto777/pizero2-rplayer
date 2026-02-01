@@ -26,6 +26,14 @@ DEFAULT_RADIKO_APP = os.getenv("RPLAYER_RADIKO_APP", "pc_1")
 DEFAULT_RADIKO_APP_VER = os.getenv("RPLAYER_RADIKO_APP_VER", "2.0.1")
 DEFAULT_RADIKO_DEVICE = os.getenv("RPLAYER_RADIKO_DEVICE", "pc")
 DEFAULT_RADIKO_USER = os.getenv("RPLAYER_RADIKO_USER", "test-stream")
+DEFAULT_RADIKO_AUTH1_URLS = os.getenv(
+    "RPLAYER_RADIKO_AUTH1_URLS",
+    "https://radiko.jp/v2/api/auth1,https://radiko.jp/v2/api/auth1_fms,http://radiko.jp/v2/api/auth1,http://radiko.jp/v2/api/auth1_fms",
+)
+DEFAULT_RADIKO_AUTH2_URLS = os.getenv(
+    "RPLAYER_RADIKO_AUTH2_URLS",
+    "https://radiko.jp/v2/api/auth2,https://radiko.jp/v2/api/auth2_fms,http://radiko.jp/v2/api/auth2,http://radiko.jp/v2/api/auth2_fms",
+)
 
 
 @dataclass
@@ -395,13 +403,15 @@ class RadikoResolver:
         try:
             res1 = None
             token = keylength = keyoffset = None
-            for url in (
-                "https://radiko.jp/v2/api/auth1",
-                "https://radiko.jp/v2/api/auth1_fms",
-                "http://radiko.jp/v2/api/auth1",
-                "http://radiko.jp/v2/api/auth1_fms",
-            ):
-                res1 = requests.post(url, headers=headers, data=b"\r\n", timeout=5)
+            auth1_urls = [u.strip() for u in DEFAULT_RADIKO_AUTH1_URLS.split(",") if u.strip()]
+            for url in auth1_urls:
+                res1 = requests.post(
+                    url,
+                    headers=headers,
+                    data=b"\r\n",
+                    timeout=5,
+                    allow_redirects=True,
+                )
                 token = res1.headers.get("X-Radiko-AuthToken")
                 keylength = res1.headers.get("X-Radiko-KeyLength")
                 keyoffset = res1.headers.get("X-Radiko-KeyOffset")
@@ -415,6 +425,7 @@ class RadikoResolver:
                     print(f"Radiko: auth1 status {res1.status_code}")
                     print(f"Radiko: auth1 headers {dict(res1.headers)}")
                     print(f"Radiko: auth1 body {res1.text[:200]!r}")
+                    print(f"Radiko: auth1 url {res1.url}")
                 if DEBUG:
                     print("Radiko: auth1 missing headers")
                 return None
@@ -427,13 +438,15 @@ class RadikoResolver:
             headers2["X-Radiko-Authtoken"] = token
             headers2["X-Radiko-Partialkey"] = partial
             res2 = None
-            for url in (
-                "https://radiko.jp/v2/api/auth2",
-                "https://radiko.jp/v2/api/auth2_fms",
-                "http://radiko.jp/v2/api/auth2",
-                "http://radiko.jp/v2/api/auth2_fms",
-            ):
-                res2 = requests.post(url, headers=headers2, data=b"\r\n", timeout=5)
+            auth2_urls = [u.strip() for u in DEFAULT_RADIKO_AUTH2_URLS.split(",") if u.strip()]
+            for url in auth2_urls:
+                res2 = requests.post(
+                    url,
+                    headers=headers2,
+                    data=b"\r\n",
+                    timeout=5,
+                    allow_redirects=True,
+                )
                 if res2.status_code == 200:
                     if DEBUG:
                         print(f"Radiko: auth2 ok ({url})")
