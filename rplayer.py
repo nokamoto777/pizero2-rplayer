@@ -223,6 +223,15 @@ class RadikoResolver:
                 except Exception as exc2:
                     if DEBUG:
                         print(f"Radiko: stream_url retry failed for {station_id}: {exc2!r}")
+            # Fallback: some APIs may accept station_id directly.
+            try:
+                url = str(self._client.get_stream(station_id))
+                if DEBUG:
+                    print(f"Radiko: stream_url (id) for {station_id} -> {url}")
+                return url
+            except Exception as exc3:
+                if DEBUG:
+                    print(f"Radiko: stream_url (id) failed for {station_id}: {exc3!r}")
             return None
 
     def on_air_title(self, station_id: str) -> Optional[str]:
@@ -266,11 +275,15 @@ class RadikoResolver:
             if hasattr(station, "select"):
                 station.select()
             elif hasattr(self._client, "select_station"):
-                self._client.select_station(station)
+                self._call_select(self._client.select_station, station, station_id)
             elif hasattr(self._client, "set_station"):
-                self._client.set_station(station)
+                self._call_select(self._client.set_station, station, station_id)
             elif hasattr(self._client, "select"):
-                self._client.select(station)
+                self._call_select(self._client.select, station, station_id)
+            elif hasattr(self._client, "station"):
+                setattr(self._client, "station", station)
+            elif hasattr(self._client, "selected_station"):
+                setattr(self._client, "selected_station", station)
             else:
                 return False
             if DEBUG:
@@ -280,6 +293,13 @@ class RadikoResolver:
             if DEBUG:
                 print(f"Radiko: select failed for {station_id}: {exc!r}")
             return False
+
+    @staticmethod
+    def _call_select(func, station: object, station_id: str) -> None:
+        try:
+            func(station)
+        except TypeError:
+            func(station_id)
 
 
 class Player:
