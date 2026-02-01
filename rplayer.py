@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import os
 import queue
@@ -18,6 +19,13 @@ DEFAULT_METADATA_SEC = 10.0
 DEBUG = os.getenv("RPLAYER_DEBUG") == "1"
 DEFAULT_ALSA_DEVICE = os.getenv("RPLAYER_ALSA_DEVICE", "hw:1,0")
 DEFAULT_FFMPEG = os.getenv("RPLAYER_FFMPEG", "ffmpeg")
+DEFAULT_RADIKO_AUTHKEY = os.getenv(
+    "RPLAYER_RADIKO_AUTHKEY", "bcd151073c03b352e1ef2fd66c32209da9ca0afa"
+)
+DEFAULT_RADIKO_APP = os.getenv("RPLAYER_RADIKO_APP", "pc_1")
+DEFAULT_RADIKO_APP_VER = os.getenv("RPLAYER_RADIKO_APP_VER", "2.0.1")
+DEFAULT_RADIKO_DEVICE = os.getenv("RPLAYER_RADIKO_DEVICE", "pc")
+DEFAULT_RADIKO_USER = os.getenv("RPLAYER_RADIKO_USER", "test-stream")
 
 
 @dataclass
@@ -169,6 +177,8 @@ class RadikoResolver:
         self._client = None
         self._station_map: Dict[str, object] = {}
         self._selected_id: Optional[str] = None
+        self._auth_token: Optional[str] = None
+        self._auth_headers: Dict[str, str] = {}
         self._init_client()
 
     def _init_client(self) -> None:
@@ -203,26 +213,25 @@ class RadikoResolver:
         return str(getattr(station, "name", "")).strip() or None
 
     def auth_token(self) -> Optional[str]:
-        if not self._client:
-            return None
+        if self._auth_token:
+            return self._auth_token
         token = self._get_token_from_attrs()
         if token:
+            self._auth_token = token
             return token
         token = self._get_token_from_methods()
         if token:
+            self._auth_token = token
             return token
-        for attr in ("auth_token", "authtoken", "_auth_token", "_token", "token"):
-            value = getattr(self._client, attr, None)
-            if value:
-                return str(value)
-        return None
+        token = self._auth_with_radiko()
+        if token:
+            self._auth_token = token
+        return self._auth_token
 
     def auth_headers(self) -> Dict[str, str]:
-        headers: Dict[str, str] = {}
-        if not self._client:
-            return headers
+        headers: Dict[str, str] = dict(self._auth_headers)
         for attr in ("headers", "auth_headers", "stream_headers", "request_headers"):
-            value = getattr(self._client, attr, None)
+            value = getattr(self._client, attr, None) if self._client else None
             if isinstance(value, dict):
                 for k, v in value.items():
                     if isinstance(k, str) and isinstance(v, str):
@@ -365,6 +374,54 @@ class RadikoResolver:
                     if DEBUG:
                         print(f"Radiko: {name}() failed: {exc!r}")
         return None
+
+    def _auth_with_radiko(self) -> Optional[str]:
+        try:
+            import requests  # type: ignore
+        except Exception as exc:
+            if DEBUG:
+                print(f"Radiko: requests not available: {exc!r}")
+            return None
+
+        headers = {
+            "Pragma": "no-cache",
+            "Cache-Control": "no-cache",
+            "X-Radiko-App": DEFAULT_RADIKO_APP,
+            "X-Radiko-App-Version": DEFAULT_RADIKO_APP_VER,
+            "X-Radiko-Device": DEFAULT_RADIKO_DEVICE,
+            "X-Radiko-User": DEFAULT_RADIKO_USER,
+        }
+        try:
+            res1 = requests.post("https://radiko.jp/v2/api/auth1_fms", headers=headers, data=b"\r\n")
+            token = res1.headers.get("X-Radiko-AuthToken")
+            keylength = res1.headers.get("X-Radiko-KeyLength")
+            keyoffset = res1.headers.get("X-Radiko-KeyOffset")
+            if not (token and keylength and keyoffset):
+                if DEBUG:
+                    print("Radiko: auth1 missing headers")
+                return None
+
+            offset = int(keyoffset)
+            length = int(keylength)
+            authkey_bytes = DEFAULT_RADIKO_AUTHKEY.encode("ascii")
+            partial = base64.b64encode(authkey_bytes[offset : offset + length]).decode("ascii")
+            headers2 = dict(headers)
+            headers2["X-Radiko-Authtoken"] = token
+            headers2["X-Radiko-Partialkey"] = partial
+            res2 = requests.post("https://radiko.jp/v2/api/auth2_fms", headers=headers2, data=b"\r\n")
+            if res2.status_code != 200:
+                if DEBUG:
+                    print(f"Radiko: auth2 failed: {res2.status_code}")
+                return None
+
+            self._auth_headers = headers2
+            if DEBUG:
+                print("Radiko: auth2 ok")
+            return token
+        except Exception as exc:
+            if DEBUG:
+                print(f"Radiko: auth flow failed: {exc!r}")
+            return None
 
 
 class Player:

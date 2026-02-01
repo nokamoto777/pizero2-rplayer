@@ -156,6 +156,10 @@ RPLAYER_ST7789_ROTATION=0 python3 rplayer.py
   - System time/timezone are correct (`timedatectl`).
   - No VPN/proxy is interfering.
   - As a fallback, set a known `stream_url` manually in `stations.json`.
+- If `auth token missing` appears, set radiko auth env vars or use the defaults:
+  - `RPLAYER_RADIKO_AUTHKEY`
+  - `RPLAYER_RADIKO_APP` / `RPLAYER_RADIKO_APP_VER`
+  - `RPLAYER_RADIKO_DEVICE` / `RPLAYER_RADIKO_USER`
 - Verify buttons with gpiozero:
 ```bash
 python3 - <<'PY'
