@@ -15,6 +15,7 @@ DEFAULT_BUTTON_A_PIN = 5
 DEFAULT_BUTTON_B_PIN = 6
 DEFAULT_REFRESH_SEC = 1.0
 DEFAULT_METADATA_SEC = 10.0
+DEBUG = os.getenv("RPLAYER_DEBUG") == "1"
 
 
 @dataclass
@@ -49,9 +50,27 @@ class LineOutDisplay:
     def _init_display(self) -> None:
         # Best-effort: try to use ST7789 + PIL if available.
         try:
-            import st7789  # type: ignore
             from PIL import Image, ImageDraw, ImageFont  # type: ignore
         except Exception:
+            return
+
+        display_cls = None
+        try:
+            import st7789  # type: ignore
+
+            display_cls = st7789.ST7789
+        except Exception:
+            display_cls = None
+
+        if display_cls is None:
+            try:
+                from ST7789 import ST7789 as display_cls  # type: ignore
+            except Exception:
+                display_cls = None
+
+        if display_cls is None:
+            if DEBUG:
+                print("Display init: no ST7789 module found")
             return
 
         try:
@@ -61,7 +80,7 @@ class LineOutDisplay:
             dc = _env_int("RPLAYER_ST7789_DC", 9)
             backlight = _env_int("RPLAYER_ST7789_BACKLIGHT", 13)
             speed_hz = _env_int("RPLAYER_ST7789_SPEED_HZ", 80_000_000)
-            self._display = st7789.ST7789(
+            self._display = display_cls(
                 rotation=rotation,
                 port=port,
                 cs=cs,
@@ -74,7 +93,11 @@ class LineOutDisplay:
             self._image = Image.new("RGB", (self._width, self._height))
             self._draw = ImageDraw.Draw(self._image)
             self._font = ImageFont.load_default()
+            if DEBUG:
+                print(f"Display init: {self._width}x{self._height}")
         except Exception:
+            if DEBUG:
+                print("Display init: failed")
             self._display = None
 
     def show(self, line1: str, line2: str) -> None:
@@ -97,27 +120,39 @@ class LineOutDisplay:
 class ButtonInput:
     def __init__(self, a_pin: int, b_pin: int) -> None:
         self._queue: "queue.Queue[str]" = queue.Queue()
+        if os.getenv("RPLAYER_DISABLE_GPIO") == "1":
+            return
         self._init_gpio(a_pin, b_pin)
 
     def _init_gpio(self, a_pin: int, b_pin: int) -> None:
         try:
             from gpiozero import Button  # type: ignore
         except Exception:
+            if DEBUG:
+                print("GPIO init: gpiozero not available")
             return
 
         def on_a() -> None:
             self._queue.put("prev")
+            if DEBUG:
+                print("Button A pressed")
 
         def on_b() -> None:
             self._queue.put("next")
+            if DEBUG:
+                print("Button B pressed")
 
         try:
             btn_a = Button(a_pin, pull_up=True)
             btn_b = Button(b_pin, pull_up=True)
             btn_a.when_pressed = on_a
             btn_b.when_pressed = on_b
+            if DEBUG:
+                print(f"GPIO init: A=BCM{a_pin} B=BCM{b_pin}")
         except Exception:
             # Ignore GPIO failures and fall back to no-op input.
+            if DEBUG:
+                print("GPIO init: failed")
             return
 
     def poll(self) -> Optional[str]:
@@ -137,6 +172,8 @@ class RadikoResolver:
         try:
             import radiko  # type: ignore
         except Exception:
+            if DEBUG:
+                print("Radiko: radiko.py not available")
             return
         try:
             self._client = radiko.Client()
@@ -144,9 +181,13 @@ class RadikoResolver:
                 station_id = getattr(station, "id", "")
                 if station_id:
                     self._station_map[str(station_id)] = station
+            if DEBUG:
+                print(f"Radiko: loaded {len(self._station_map)} stations")
         except Exception:
             self._client = None
             self._station_map = {}
+            if DEBUG:
+                print("Radiko: init failed")
 
     def available(self) -> bool:
         return self._client is not None and bool(self._station_map)
@@ -164,8 +205,13 @@ class RadikoResolver:
         if not station:
             return None
         try:
-            return str(self._client.get_stream(station))
+            url = str(self._client.get_stream(station))
+            if DEBUG:
+                print(f"Radiko: stream_url for {station_id} -> {url}")
+            return url
         except Exception:
+            if DEBUG:
+                print(f"Radiko: stream_url failed for {station_id}")
             return None
 
     def on_air_title(self, station_id: str) -> Optional[str]:
@@ -177,6 +223,8 @@ class RadikoResolver:
             title = getattr(on_air, "title", "")
             return str(title).strip() or None
         except Exception:
+            if DEBUG:
+                print(f"Radiko: on_air failed for {station_id}")
             return None
 
 
@@ -277,6 +325,8 @@ def run(cmd: List[str]) -> subprocess.CompletedProcess:
 
 
 def play_stream(url: str) -> None:
+    if DEBUG:
+        print(f"mpc play: {url}")
     run(["mpc", "clear"])
     run(["mpc", "add", url])
     run(["mpc", "play"])
@@ -289,6 +339,11 @@ def get_mpd_title() -> str:
         return title
     out = run(["mpc", "current"])
     return out.stdout.strip()
+
+
+def mpd_is_available() -> bool:
+    out = run(["mpc", "status"])
+    return out.returncode == 0
 
 
 def load_stations(path: str) -> List[Station]:
@@ -345,6 +400,10 @@ def main() -> int:
         return 1
 
     display = LineOutDisplay()
+    if not mpd_is_available():
+        display.show("mpd not running", "start mpd")
+        print("mpd is not running. Start it with: sudo systemctl enable --now mpd")
+        return 1
     buttons = ButtonInput(
         int(os.getenv("RPLAYER_BUTTON_A", DEFAULT_BUTTON_A_PIN)),
         int(os.getenv("RPLAYER_BUTTON_B", DEFAULT_BUTTON_B_PIN)),

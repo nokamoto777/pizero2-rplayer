@@ -82,13 +82,18 @@ dtparam=audio=off
 ```bash
 systemctl --user status mpd || systemctl status mpd
 ```
+If inactive, enable system mpd:
+```bash
+sudo systemctl enable --now mpd
+```
 
 6) Python deps:
 ```bash
-python3 -m venv .venv
+python3 -m venv .venv --system-site-packages
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+GPIOバックエンドはaptで入れるため、venvは `--system-site-packages` 推奨。
 
 ## Minimal prototype (fixed stream)
 1) Edit `stations.json` and set `stream_url` for one station.
@@ -117,6 +122,39 @@ If A/B are swapped, change the env vars below.
 Override with env vars:
 ```bash
 RPLAYER_BUTTON_A=5 RPLAYER_BUTTON_B=6 python3 rplayer.py
+```
+
+If GPIO libraries are not available, you can disable button handling:
+```bash
+RPLAYER_DISABLE_GPIO=1 python3 rplayer.py
+```
+
+### Debug output
+Enable debug logs to the console:
+```bash
+RPLAYER_DEBUG=1 python3 rplayer.py
+```
+
+### Troubleshooting checklist
+- `mpd` must be running (`sudo systemctl enable --now mpd`).
+- SPI must be enabled and `/dev/spidev0.0` should exist.
+- If display shows garbage, try a different rotation:
+```bash
+RPLAYER_ST7789_ROTATION=0 python3 rplayer.py
+```
+- Verify buttons with gpiozero:
+```bash
+python3 - <<'PY'
+from gpiozero import Button
+from time import sleep
+a=Button(5,pull_up=True)
+b=Button(6,pull_up=True)
+print("Press A/B, Ctrl+C to exit")
+while True:
+    if a.is_pressed: print("A")
+    if b.is_pressed: print("B")
+    sleep(0.1)
+PY
 ```
 
 ### Display pin config
