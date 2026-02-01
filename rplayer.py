@@ -186,6 +186,7 @@ class RadikoResolver:
                     self._station_map[str(station_id)] = station
             if DEBUG:
                 print(f"Radiko: loaded {len(self._station_map)} stations")
+                self._debug_client_attrs()
         except Exception:
             self._client = None
             self._station_map = {}
@@ -204,11 +205,32 @@ class RadikoResolver:
     def auth_token(self) -> Optional[str]:
         if not self._client:
             return None
+        token = self._get_token_from_attrs()
+        if token:
+            return token
+        token = self._get_token_from_methods()
+        if token:
+            return token
         for attr in ("auth_token", "authtoken", "_auth_token", "_token", "token"):
             value = getattr(self._client, attr, None)
             if value:
                 return str(value)
         return None
+
+    def auth_headers(self) -> Dict[str, str]:
+        headers: Dict[str, str] = {}
+        if not self._client:
+            return headers
+        for attr in ("headers", "auth_headers", "stream_headers", "request_headers"):
+            value = getattr(self._client, attr, None)
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    if isinstance(k, str) and isinstance(v, str):
+                        headers[k] = v
+        token = self.auth_token()
+        if token and "X-Radiko-Authtoken" not in headers:
+            headers["X-Radiko-Authtoken"] = token
+        return headers
 
     def stream_url(self, station_id: str) -> Optional[str]:
         if not self._client:
@@ -311,6 +333,38 @@ class RadikoResolver:
             func(station)
         except TypeError:
             func(station_id)
+
+    def _debug_client_attrs(self) -> None:
+        if not DEBUG or not self._client:
+            return
+        keys = [k for k in dir(self._client) if "auth" in k.lower() or "token" in k.lower()]
+        if keys:
+            print("Radiko: client attrs:", ", ".join(sorted(keys)))
+
+    def _get_token_from_attrs(self) -> Optional[str]:
+        if not self._client:
+            return None
+        for attr in dir(self._client):
+            if "token" in attr.lower():
+                value = getattr(self._client, attr, None)
+                if isinstance(value, str) and value:
+                    return value
+        return None
+
+    def _get_token_from_methods(self) -> Optional[str]:
+        if not self._client:
+            return None
+        for name in ("auth", "authorize", "authenticate", "get_token"):
+            func = getattr(self._client, name, None)
+            if callable(func):
+                try:
+                    value = func()
+                    if isinstance(value, str) and value:
+                        return value
+                except Exception as exc:
+                    if DEBUG:
+                        print(f"Radiko: {name}() failed: {exc!r}")
+        return None
 
 
 class Player:
@@ -424,7 +478,12 @@ class Player:
             print("Radiko: auth token loaded")
 
     def _start_ffmpeg(self, url: str, token: str) -> None:
-        headers = f"X-Radiko-Authtoken: {token}\\r\\n"
+        headers_map: Dict[str, str] = {}
+        if self._resolver:
+            headers_map = self._resolver.auth_headers()
+        if not headers_map:
+            headers_map = {"X-Radiko-Authtoken": token}
+        headers = "".join(f"{k}: {v}\\r\\n" for k, v in headers_map.items())
         cmd = [
             DEFAULT_FFMPEG,
             "-loglevel",
