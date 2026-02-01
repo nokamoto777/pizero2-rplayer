@@ -166,6 +166,7 @@ class RadikoResolver:
     def __init__(self) -> None:
         self._client = None
         self._station_map: Dict[str, object] = {}
+        self._selected_id: Optional[str] = None
         self._init_client()
 
     def _init_client(self) -> None:
@@ -205,6 +206,7 @@ class RadikoResolver:
         if not station:
             return None
         try:
+            self._ensure_selected(station, station_id)
             url = str(self._client.get_stream(station))
             if DEBUG:
                 print(f"Radiko: stream_url for {station_id} -> {url}")
@@ -212,6 +214,15 @@ class RadikoResolver:
         except Exception as exc:
             if DEBUG:
                 print(f"Radiko: stream_url failed for {station_id}: {exc!r}")
+            if self._maybe_retry_after_select(exc, station, station_id):
+                try:
+                    url = str(self._client.get_stream(station))
+                    if DEBUG:
+                        print(f"Radiko: stream_url retry for {station_id} -> {url}")
+                    return url
+                except Exception as exc2:
+                    if DEBUG:
+                        print(f"Radiko: stream_url retry failed for {station_id}: {exc2!r}")
             return None
 
     def on_air_title(self, station_id: str) -> Optional[str]:
@@ -219,13 +230,56 @@ class RadikoResolver:
         if not station:
             return None
         try:
+            self._ensure_selected(station, station_id)
             on_air = station.get_on_air()
             title = getattr(on_air, "title", "")
             return str(title).strip() or None
         except Exception as exc:
             if DEBUG:
                 print(f"Radiko: on_air failed for {station_id}: {exc!r}")
+            if self._maybe_retry_after_select(exc, station, station_id):
+                try:
+                    on_air = station.get_on_air()
+                    title = getattr(on_air, "title", "")
+                    return str(title).strip() or None
+                except Exception as exc2:
+                    if DEBUG:
+                        print(f"Radiko: on_air retry failed for {station_id}: {exc2!r}")
             return None
+
+    def _ensure_selected(self, station: object, station_id: str) -> None:
+        if self._selected_id == station_id:
+            return
+        if self._select_station(station, station_id):
+            self._selected_id = station_id
+
+    def _maybe_retry_after_select(self, exc: Exception, station: object, station_id: str) -> bool:
+        message = repr(exc)
+        if "NotSelectedError" in message or "選択" in message:
+            return self._select_station(station, station_id)
+        return False
+
+    def _select_station(self, station: object, station_id: str) -> bool:
+        if not self._client:
+            return False
+        try:
+            if hasattr(station, "select"):
+                station.select()
+            elif hasattr(self._client, "select_station"):
+                self._client.select_station(station)
+            elif hasattr(self._client, "set_station"):
+                self._client.set_station(station)
+            elif hasattr(self._client, "select"):
+                self._client.select(station)
+            else:
+                return False
+            if DEBUG:
+                print(f"Radiko: selected {station_id}")
+            return True
+        except Exception as exc:
+            if DEBUG:
+                print(f"Radiko: select failed for {station_id}: {exc!r}")
+            return False
 
 
 class Player:
