@@ -16,6 +16,8 @@ DEFAULT_BUTTON_B_PIN = 6
 DEFAULT_REFRESH_SEC = 1.0
 DEFAULT_METADATA_SEC = 10.0
 DEBUG = os.getenv("RPLAYER_DEBUG") == "1"
+DEFAULT_ALSA_DEVICE = os.getenv("RPLAYER_ALSA_DEVICE", "hw:1,0")
+DEFAULT_FFMPEG = os.getenv("RPLAYER_FFMPEG", "ffmpeg")
 
 
 @dataclass
@@ -199,6 +201,15 @@ class RadikoResolver:
             return None
         return str(getattr(station, "name", "")).strip() or None
 
+    def auth_token(self) -> Optional[str]:
+        if not self._client:
+            return None
+        for attr in ("auth_token", "authtoken", "_auth_token", "_token", "token"):
+            value = getattr(self._client, attr, None)
+            if value:
+                return str(value)
+        return None
+
     def stream_url(self, station_id: str) -> Optional[str]:
         if not self._client:
             return None
@@ -321,7 +332,10 @@ class Player:
         self._last_meta_at = 0.0
         self._stream_cache: Dict[str, str] = {}
         self._title_cache: Dict[str, Tuple[str, float]] = {}
+        self._ffmpeg: Optional[subprocess.Popen] = None
+        self._radiko_token: Optional[str] = None
         self._hydrate_station_names()
+        self._load_radiko_token()
 
     def _hydrate_station_names(self) -> None:
         if not self._resolver:
@@ -359,7 +373,16 @@ class Player:
             self._display.show(label, "stream_url missing")
             return
 
-        play_stream(stream_url)
+        self._stop_ffmpeg()
+        if stream_url.endswith(".m3u8") and not self._radiko_token:
+            self._display.show(label, "radiko token missing")
+            if DEBUG:
+                print("Radiko: auth token missing, cannot play HLS")
+            return
+        if self._radiko_token and stream_url.endswith(".m3u8"):
+            self._start_ffmpeg(stream_url, self._radiko_token)
+        else:
+            play_stream(stream_url)
         self._display.show(label, "Loading...")
         self._last_meta = ""
         self._last_meta_at = 0.0
@@ -392,6 +415,49 @@ class Player:
                 self._title_cache[station.id] = (title, time.time())
                 return title
         return get_mpd_title()
+
+    def _load_radiko_token(self) -> None:
+        if not self._resolver or not self._resolver.available():
+            return
+        self._radiko_token = self._resolver.auth_token()
+        if DEBUG and self._radiko_token:
+            print("Radiko: auth token loaded")
+
+    def _start_ffmpeg(self, url: str, token: str) -> None:
+        headers = f"X-Radiko-Authtoken: {token}\\r\\n"
+        cmd = [
+            DEFAULT_FFMPEG,
+            "-loglevel",
+            "warning" if not DEBUG else "info",
+            "-headers",
+            headers,
+            "-i",
+            url,
+            "-f",
+            "alsa",
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+            DEFAULT_ALSA_DEVICE,
+        ]
+        if DEBUG:
+            print("ffmpeg:", " ".join(cmd))
+        self._ffmpeg = subprocess.Popen(cmd)
+
+    def _stop_ffmpeg(self) -> None:
+        if not self._ffmpeg:
+            return
+        try:
+            self._ffmpeg.terminate()
+            self._ffmpeg.wait(timeout=2)
+        except Exception:
+            try:
+                self._ffmpeg.kill()
+            except Exception:
+                pass
+        finally:
+            self._ffmpeg = None
 
 
 def run(cmd: List[str]) -> subprocess.CompletedProcess:
@@ -474,15 +540,15 @@ def main() -> int:
         return 1
 
     display = LineOutDisplay()
-    if not mpd_is_available():
-        display.show("mpd not running", "start mpd")
-        print("mpd is not running. Start it with: sudo systemctl enable --now mpd")
-        return 1
     buttons = ButtonInput(
         int(os.getenv("RPLAYER_BUTTON_A", DEFAULT_BUTTON_A_PIN)),
         int(os.getenv("RPLAYER_BUTTON_B", DEFAULT_BUTTON_B_PIN)),
     )
     resolver = RadikoResolver()
+    if not mpd_is_available() and not resolver.auth_token():
+        display.show("mpd not running", "start mpd")
+        print("mpd is not running. Start it with: sudo systemctl enable --now mpd")
+        return 1
     player = Player(stations, display, buttons, resolver)
     player._start_current()
 
@@ -499,6 +565,7 @@ def main() -> int:
         player.tick()
         time.sleep(DEFAULT_REFRESH_SEC)
 
+    player._stop_ffmpeg()
     return 0
 
 

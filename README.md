@@ -110,6 +110,15 @@ python3 rplayer.py
 python3 rplayer.py
 ```
 3) If auth fails, test with a known stream URL first.
+4) Radiko HLS requires `X-Radiko-AuthToken` headers. The app uses `ffmpeg` to play
+   HLS directly with headers because `mpd` cannot add custom headers.
+
+### ALSA output for radiko (ffmpeg)
+`ffmpeg` outputs directly to ALSA. Set the device if needed:
+```bash
+RPLAYER_ALSA_DEVICE=hw:1,0 python3 rplayer.py
+```
+Use `aplay -l` to find the correct card/device.
 
 ### Button pin config
 Defaults in `rplayer.py`:
@@ -136,7 +145,7 @@ RPLAYER_DEBUG=1 python3 rplayer.py
 ```
 
 ### Troubleshooting checklist
-- `mpd` must be running (`sudo systemctl enable --now mpd`).
+- `mpd` must be running when using manual `stream_url` (`sudo systemctl enable --now mpd`).
 - SPI must be enabled and `/dev/spidev0.0` should exist.
 - If display shows garbage, try a different rotation:
 ```bash
