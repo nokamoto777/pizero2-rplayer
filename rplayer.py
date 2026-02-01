@@ -390,13 +390,25 @@ class RadikoResolver:
             "X-Radiko-App-Version": DEFAULT_RADIKO_APP_VER,
             "X-Radiko-Device": DEFAULT_RADIKO_DEVICE,
             "X-Radiko-User": DEFAULT_RADIKO_USER,
+            "User-Agent": "Mozilla/5.0",
         }
         try:
-            res1 = requests.post("https://radiko.jp/v2/api/auth1_fms", headers=headers, data=b"\r\n")
-            token = res1.headers.get("X-Radiko-AuthToken")
-            keylength = res1.headers.get("X-Radiko-KeyLength")
-            keyoffset = res1.headers.get("X-Radiko-KeyOffset")
+            res1 = None
+            for url in ("https://radiko.jp/v2/api/auth1_fms", "http://radiko.jp/v2/api/auth1_fms"):
+                res1 = requests.post(url, headers=headers, data=b"\r\n", timeout=5)
+                token = res1.headers.get("X-Radiko-AuthToken")
+                keylength = res1.headers.get("X-Radiko-KeyLength")
+                keyoffset = res1.headers.get("X-Radiko-KeyOffset")
+                if token and keylength and keyoffset:
+                    break
+            else:
+                token = keylength = keyoffset = None
+
             if not (token and keylength and keyoffset):
+                if DEBUG and res1 is not None:
+                    print(f"Radiko: auth1 status {res1.status_code}")
+                    print(f"Radiko: auth1 headers {dict(res1.headers)}")
+                    print(f"Radiko: auth1 body {res1.text[:200]!r}")
                 if DEBUG:
                     print("Radiko: auth1 missing headers")
                 return None
