@@ -161,6 +161,7 @@ RPLAYER_ST7789_ROTATION=0 python3 rplayer.py
   - `RPLAYER_RADIKO_APP` / `RPLAYER_RADIKO_APP_VER`
   - `RPLAYER_RADIKO_DEVICE` / `RPLAYER_RADIKO_USER`
   - `RPLAYER_RADIKO_AUTH1_URLS` / `RPLAYER_RADIKO_AUTH2_URLS` (comma-separated override)
+  - `RPLAYER_RADIKO_COOKIE` (copy cookies from a browser session if auth1 returns 503)
 - Verify buttons with gpiozero:
 ```bash
 python3 - <<'PY'

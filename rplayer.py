@@ -22,10 +22,11 @@ DEFAULT_FFMPEG = os.getenv("RPLAYER_FFMPEG", "ffmpeg")
 DEFAULT_RADIKO_AUTHKEY = os.getenv(
     "RPLAYER_RADIKO_AUTHKEY", "bcd151073c03b352e1ef2fd66c32209da9ca0afa"
 )
-DEFAULT_RADIKO_APP = os.getenv("RPLAYER_RADIKO_APP", "pc_1")
-DEFAULT_RADIKO_APP_VER = os.getenv("RPLAYER_RADIKO_APP_VER", "2.0.1")
+DEFAULT_RADIKO_APP = os.getenv("RPLAYER_RADIKO_APP", "pc_html5")
+DEFAULT_RADIKO_APP_VER = os.getenv("RPLAYER_RADIKO_APP_VER", "0.0.1")
 DEFAULT_RADIKO_DEVICE = os.getenv("RPLAYER_RADIKO_DEVICE", "pc")
-DEFAULT_RADIKO_USER = os.getenv("RPLAYER_RADIKO_USER", "test-stream")
+DEFAULT_RADIKO_USER = os.getenv("RPLAYER_RADIKO_USER", "dummy_user")
+DEFAULT_RADIKO_COOKIE = os.getenv("RPLAYER_RADIKO_COOKIE", "")
 DEFAULT_RADIKO_AUTH1_URLS = os.getenv(
     "RPLAYER_RADIKO_AUTH1_URLS",
     "https://radiko.jp/v2/api/auth1,https://radiko.jp/v2/api/auth1_fms,http://radiko.jp/v2/api/auth1,http://radiko.jp/v2/api/auth1_fms",
@@ -399,19 +400,24 @@ class RadikoResolver:
             "X-Radiko-Device": DEFAULT_RADIKO_DEVICE,
             "X-Radiko-User": DEFAULT_RADIKO_USER,
             "User-Agent": "Mozilla/5.0",
+            "Origin": "https://radiko.jp",
+            "Referer": "https://radiko.jp/",
         }
+        if DEFAULT_RADIKO_COOKIE:
+            headers["Cookie"] = DEFAULT_RADIKO_COOKIE
         try:
             res1 = None
             token = keylength = keyoffset = None
             auth1_urls = [u.strip() for u in DEFAULT_RADIKO_AUTH1_URLS.split(",") if u.strip()]
             for url in auth1_urls:
-                res1 = requests.post(
+                res1 = requests.get(
                     url,
                     headers=headers,
-                    data=b"\r\n",
                     timeout=5,
                     allow_redirects=True,
                 )
+                if res1.status_code in (404, 405) and DEBUG:
+                    print(f"Radiko: auth1 {res1.status_code} ({url})")
                 token = res1.headers.get("X-Radiko-AuthToken")
                 keylength = res1.headers.get("X-Radiko-KeyLength")
                 keyoffset = res1.headers.get("X-Radiko-KeyOffset")
@@ -426,6 +432,8 @@ class RadikoResolver:
                     print(f"Radiko: auth1 headers {dict(res1.headers)}")
                     print(f"Radiko: auth1 body {res1.text[:200]!r}")
                     print(f"Radiko: auth1 url {res1.url}")
+                    if "<!DOCTYPE html" in res1.text or "<html" in res1.text:
+                        print("Radiko: auth1 returned HTML (likely blocked or redirected)")
                 if DEBUG:
                     print("Radiko: auth1 missing headers")
                 return None
@@ -447,6 +455,13 @@ class RadikoResolver:
                     timeout=5,
                     allow_redirects=True,
                 )
+                if res2.status_code in (404, 405):
+                    res2 = requests.get(
+                        url,
+                        headers=headers2,
+                        timeout=5,
+                        allow_redirects=True,
+                    )
                 if res2.status_code == 200:
                     if DEBUG:
                         print(f"Radiko: auth2 ok ({url})")
