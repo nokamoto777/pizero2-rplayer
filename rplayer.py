@@ -7,6 +7,7 @@ import signal
 import subprocess
 import time
 import re
+from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -474,10 +475,36 @@ class RadikoResolver:
                 text = res.text or ""
                 try:
                     root = ET.fromstring(text)
-                    nodes = root.findall(".//url")
-                    for node in nodes:
-                        if node.text:
-                            return node.text.strip()
+                    # Prefer live/on-air (areafree=0, timefree=0)
+                    url_nodes = root.findall(".//url")
+                    playlist_urls: List[str] = []
+                    for node in url_nodes:
+                        pcu = node.find("playlist_create_url")
+                        if pcu is None or not pcu.text:
+                            continue
+                        areafree = node.attrib.get("areafree")
+                        timefree = node.attrib.get("timefree")
+                        if areafree == "0" and timefree == "0":
+                            playlist_urls.insert(0, pcu.text.strip())
+                        else:
+                            playlist_urls.append(pcu.text.strip())
+
+                    for pcu_url in playlist_urls:
+                        playlist_url = self._with_query(
+                            pcu_url,
+                            {
+                                "station_id": station_id,
+                                "l": "15",
+                                "type": "b",
+                            },
+                        )
+                        if DEBUG:
+                            print(f"Radiko: playlist_create_url -> {playlist_url}")
+                        m3u8 = self._fetch_playlist_m3u8(playlist_url, headers)
+                        if m3u8:
+                            return m3u8
+
+                    # Fallback: any element text that looks like an HLS URL.
                     for elem in root.iter():
                         if elem.text and "http" in elem.text and "m3u8" in elem.text:
                             return elem.text.strip()
@@ -493,6 +520,36 @@ class RadikoResolver:
         except Exception as exc:
             if DEBUG:
                 print(f"Radiko: stream xml failed for {station_id}: {exc!r}")
+        return None
+
+    @staticmethod
+    def _with_query(url: str, extra: Dict[str, str]) -> str:
+        parts = urlparse(url)
+        query = dict(parse_qsl(parts.query))
+        query.update(extra)
+        return urlunparse(parts._replace(query=urlencode(query)))
+
+    def _fetch_playlist_m3u8(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+        try:
+            import requests  # type: ignore
+        except Exception:
+            return None
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code != 200:
+                if DEBUG:
+                    print(f"Radiko: playlist status {res.status_code} for {url}")
+                return None
+            body = res.text or ""
+            match = re.search(r"https?://[^\s<>\"]+\.m3u8", body)
+            if match:
+                return match.group(0)
+            if DEBUG:
+                print(f"Radiko: playlist no m3u8 for {url}")
+                print(f"Radiko: playlist body {body[:200]!r}")
+        except Exception as exc:
+            if DEBUG:
+                print(f"Radiko: playlist fetch failed: {exc!r}")
         return None
 
     def _get_token_from_methods(self) -> Optional[str]:
