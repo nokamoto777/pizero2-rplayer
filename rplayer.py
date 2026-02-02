@@ -6,6 +6,7 @@ import queue
 import signal
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -190,6 +191,7 @@ class RadikoResolver:
         self._selected_id: Optional[str] = None
         self._auth_token: Optional[str] = None
         self._auth_headers: Dict[str, str] = {}
+        self._stream_url_cache: Dict[str, str] = {}
         self._init_client()
 
     def _init_client(self) -> None:
@@ -253,6 +255,17 @@ class RadikoResolver:
     def stream_url(self, station_id: str) -> Optional[str]:
         if not self._client:
             return None
+        cached = self._stream_url_cache.get(station_id)
+        if cached:
+            return cached
+
+        url = self._stream_url_from_xml(station_id)
+        if url:
+            self._stream_url_cache[station_id] = url
+            if DEBUG:
+                print(f"Radiko: stream_url via xml -> {url}")
+            return url
+
         station = self._station_map.get(station_id)
         if not station:
             return None
@@ -421,6 +434,29 @@ class RadikoResolver:
         if DEBUG:
             print(f"Radiko: stream via client.get_stream(id) -> {url}")
         return url
+
+    def _stream_url_from_xml(self, station_id: str) -> Optional[str]:
+        try:
+            import requests  # type: ignore
+        except Exception:
+            return None
+
+        url = f"https://radiko.jp/v3/station/stream/pc_html5/{station_id}.xml"
+        try:
+            res = requests.get(url, timeout=5)
+            if res.status_code != 200:
+                if DEBUG:
+                    print(f"Radiko: stream xml status {res.status_code} for {station_id}")
+                return None
+            root = ET.fromstring(res.text)
+            urls = root.findall(".//url")
+            for node in urls:
+                if node.text:
+                    return node.text.strip()
+        except Exception as exc:
+            if DEBUG:
+                print(f"Radiko: stream xml failed for {station_id}: {exc!r}")
+        return None
 
     def _get_token_from_methods(self) -> Optional[str]:
         if not self._client:
