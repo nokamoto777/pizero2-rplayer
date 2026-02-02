@@ -455,6 +455,10 @@ class RadikoResolver:
                 "User-Agent": "Mozilla/5.0",
                 "Origin": "https://radiko.jp",
                 "Referer": "https://radiko.jp/",
+                "X-Radiko-App": DEFAULT_RADIKO_APP,
+                "X-Radiko-App-Version": DEFAULT_RADIKO_APP_VER,
+                "X-Radiko-Device": DEFAULT_RADIKO_DEVICE,
+                "X-Radiko-User": DEFAULT_RADIKO_USER,
             }
             token = self.auth_token()
             if token:
@@ -463,9 +467,9 @@ class RadikoResolver:
                 headers["Cookie"] = DEFAULT_RADIKO_COOKIE
             for url in urls:
                 res = requests.get(url, headers=headers, timeout=5)
+                if DEBUG:
+                    print(f"Radiko: stream xml status {res.status_code} for {station_id} ({url})")
                 if res.status_code != 200:
-                    if DEBUG:
-                        print(f"Radiko: stream xml status {res.status_code} for {station_id} ({url})")
                     continue
                 text = res.text
                 try:
