@@ -795,12 +795,16 @@ class Player:
         self._stop_ffmpeg()
         if DEBUG:
             print(f"Play station {station.id} ({label}) -> {stream_url}")
+        is_radiko_stream = bool(
+            self._resolver
+            and ("radiko" in stream_url or "smartstream" in stream_url)
+        )
         if stream_url.endswith(".m3u8") and not self._radiko_token:
             self._display.show(label, "radiko token missing")
             if DEBUG:
                 print("Radiko: auth token missing, cannot play HLS")
             return
-        if self._radiko_token and stream_url.endswith(".m3u8"):
+        if self._radiko_token and (stream_url.endswith(".m3u8") or is_radiko_stream):
             self._start_ffmpeg(stream_url, self._radiko_token)
         else:
             play_stream(stream_url)
