@@ -370,20 +370,57 @@ class RadikoResolver:
         return None
 
     def _get_stream_from_station(self, station: object, station_id: str) -> str:
+        if hasattr(station, "get_stream_url"):
+            try:
+                url = str(station.get_stream_url())
+                if DEBUG:
+                    print(f"Radiko: stream via station.get_stream_url -> {url}")
+                return url
+            except Exception:
+                pass
+        if hasattr(station, "stream_url"):
+            try:
+                url = str(getattr(station, "stream_url"))
+                if url:
+                    if DEBUG:
+                        print(f"Radiko: stream via station.stream_url -> {url}")
+                    return url
+            except Exception:
+                pass
+        if hasattr(self._client, "get_stream_url"):
+            try:
+                url = str(self._client.get_stream_url(station_id))
+                if DEBUG:
+                    print(f"Radiko: stream via client.get_stream_url -> {url}")
+                return url
+            except Exception:
+                pass
         if hasattr(station, "get_stream"):
             try:
-                return str(station.get_stream())
+                url = str(station.get_stream())
+                if DEBUG:
+                    print(f"Radiko: stream via station.get_stream -> {url}")
+                return url
             except Exception:
                 pass
         try:
-            return str(self._client.get_stream(station))
+            url = str(self._client.get_stream(station))
+            if DEBUG:
+                print(f"Radiko: stream via client.get_stream(station) -> {url}")
+            return url
         except Exception:
             pass
         try:
-            return str(self._client.get_stream())
+            url = str(self._client.get_stream())
+            if DEBUG:
+                print(f"Radiko: stream via client.get_stream() -> {url}")
+            return url
         except TypeError:
             pass
-        return str(self._client.get_stream(station_id))
+        url = str(self._client.get_stream(station_id))
+        if DEBUG:
+            print(f"Radiko: stream via client.get_stream(id) -> {url}")
+        return url
 
     def _get_token_from_methods(self) -> Optional[str]:
         if not self._client:
