@@ -482,7 +482,7 @@ class RadikoResolver:
                     return match.group(0)
                 if DEBUG:
                     print(f"Radiko: stream xml no url for {station_id} ({url})")
-                    print(f\"Radiko: stream xml body {text[:200]!r}\")
+                    print(f"Radiko: stream xml body {text[:200]!r}")
         except Exception as exc:
             if DEBUG:
                 print(f"Radiko: stream xml failed for {station_id}: {exc!r}")
