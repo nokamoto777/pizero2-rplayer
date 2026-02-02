@@ -265,6 +265,8 @@ class RadikoResolver:
             if DEBUG:
                 print(f"Radiko: stream_url via xml -> {url}")
             return url
+        if DEBUG:
+            print(f"Radiko: stream_url via xml failed for {station_id}")
 
         station = self._station_map.get(station_id)
         if not station:
@@ -441,18 +443,29 @@ class RadikoResolver:
         except Exception:
             return None
 
-        url = f"https://radiko.jp/v3/station/stream/pc_html5/{station_id}.xml"
+        urls = [
+            f"https://radiko.jp/v3/station/stream/pc_html5/{station_id}.xml",
+            f"https://radiko.jp/v3/station/stream/pc/{station_id}.xml",
+        ]
         try:
-            res = requests.get(url, timeout=5)
-            if res.status_code != 200:
-                if DEBUG:
-                    print(f"Radiko: stream xml status {res.status_code} for {station_id}")
-                return None
-            root = ET.fromstring(res.text)
-            urls = root.findall(".//url")
-            for node in urls:
-                if node.text:
-                    return node.text.strip()
+            headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Origin": "https://radiko.jp",
+                "Referer": "https://radiko.jp/",
+            }
+            if DEFAULT_RADIKO_COOKIE:
+                headers["Cookie"] = DEFAULT_RADIKO_COOKIE
+            for url in urls:
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code != 200:
+                    if DEBUG:
+                        print(f"Radiko: stream xml status {res.status_code} for {station_id} ({url})")
+                    continue
+                root = ET.fromstring(res.text)
+                nodes = root.findall(".//url")
+                for node in nodes:
+                    if node.text:
+                        return node.text.strip()
         except Exception as exc:
             if DEBUG:
                 print(f"Radiko: stream xml failed for {station_id}: {exc!r}")
