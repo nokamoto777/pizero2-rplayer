@@ -133,6 +133,13 @@ If auth1 returns 503, you can pass cookies from a browser session:
 RPLAYER_RADIKO_COOKIE="<Cookie header value>" python3 rplayer.py
 ```
 
+### Auto-generate stations.json
+You can auto-generate the station list for your current area:
+```bash
+RPLAYER_LIST_STATIONS=1 python3 rplayer.py
+```
+This overwrites `stations.json` with the IDs/names available from radiko.
+
 ### Button pin config
 Defaults in `rplayer.py`:
 - A button: BCM 5

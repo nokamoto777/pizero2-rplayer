@@ -519,10 +519,16 @@ class Player:
         return self._stations[self._index]
 
     def next_station(self) -> None:
+        if len(self._stations) < 2:
+            self._display.show(self.current_station().name or self.current_station().id, "Only one station")
+            return
         self._index = (self._index + 1) % len(self._stations)
         self._start_current()
 
     def prev_station(self) -> None:
+        if len(self._stations) < 2:
+            self._display.show(self.current_station().name or self.current_station().id, "Only one station")
+            return
         self._index = (self._index - 1) % len(self._stations)
         self._start_current()
 
@@ -705,6 +711,21 @@ def _env_int(name: str, default: int) -> int:
 
 
 def main() -> int:
+    if os.getenv("RPLAYER_LIST_STATIONS") == "1":
+        resolver = RadikoResolver()
+        if not resolver.available():
+            print("Radiko station list not available")
+            return 1
+        stations = [
+            {"id": station_id, "name": resolver.station_name(station_id) or ""}
+            for station_id in sorted(resolver._station_map.keys())
+        ]
+        path = os.getenv("RPLAYER_STATIONS", DEFAULT_STATIONS_FILE)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(stations, f, ensure_ascii=False, indent=2)
+        print(f"Wrote {len(stations)} stations to {path}")
+        return 0
+
     stations_file = os.getenv("RPLAYER_STATIONS", DEFAULT_STATIONS_FILE)
     try:
         stations = load_stations(stations_file)
