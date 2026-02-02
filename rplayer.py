@@ -281,12 +281,13 @@ class RadikoResolver:
         if not self._client:
             return None
         cached = self._stream_url_cache.get(station_id)
-        if cached:
+        if cached and "medialist" not in cached:
             return cached
 
         url = self._stream_url_from_xml(station_id)
         if url:
-            self._stream_url_cache[station_id] = url
+            if "medialist" not in url:
+                self._stream_url_cache[station_id] = url
             if DEBUG:
                 print(f"Radiko: stream_url via xml -> {url}")
             return url
@@ -803,11 +804,14 @@ class Player:
         label = station.name or station.id
         stream_url = station.stream_url
         if not stream_url and self._resolver:
-            stream_url = self._stream_cache.get(station.id)
+            cached = self._stream_cache.get(station.id)
+            if cached and "medialist" not in cached:
+                stream_url = cached
             if not stream_url:
                 stream_url = self._resolver.stream_url(station.id)
                 if stream_url:
-                    self._stream_cache[station.id] = stream_url
+                    if "medialist" not in stream_url:
+                        self._stream_cache[station.id] = stream_url
 
         if not stream_url:
             self._display.show(label, "stream_url missing")
