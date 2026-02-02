@@ -139,6 +139,8 @@ class LineOutDisplay:
 class ButtonInput:
     def __init__(self, a_pin: int, b_pin: int) -> None:
         self._queue: "queue.Queue[str]" = queue.Queue()
+        self._btn_a = None
+        self._btn_b = None
         if os.getenv("RPLAYER_DISABLE_GPIO") == "1":
             return
         self._init_gpio(a_pin, b_pin)
@@ -162,10 +164,10 @@ class ButtonInput:
                 print("Button B pressed")
 
         try:
-            btn_a = Button(a_pin, pull_up=True)
-            btn_b = Button(b_pin, pull_up=True)
-            btn_a.when_pressed = on_a
-            btn_b.when_pressed = on_b
+            self._btn_a = Button(a_pin, pull_up=True)
+            self._btn_b = Button(b_pin, pull_up=True)
+            self._btn_a.when_pressed = on_a
+            self._btn_b.when_pressed = on_b
             if DEBUG:
                 print(f"GPIO init: A=BCM{a_pin} B=BCM{b_pin}")
         except Exception:
