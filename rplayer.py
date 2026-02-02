@@ -471,13 +471,16 @@ class RadikoResolver:
                     print(f"Radiko: stream xml status {res.status_code} for {station_id} ({url})")
                 if res.status_code != 200:
                     continue
-                text = res.text
+                text = res.text or ""
                 try:
                     root = ET.fromstring(text)
                     nodes = root.findall(".//url")
                     for node in nodes:
                         if node.text:
                             return node.text.strip()
+                    for elem in root.iter():
+                        if elem.text and "http" in elem.text and "m3u8" in elem.text:
+                            return elem.text.strip()
                 except Exception:
                     pass
                 # Fallback: regex for any m3u8 URL in the XML.
