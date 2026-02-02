@@ -4,10 +4,11 @@ import json
 import os
 import queue
 import signal
+import secrets
 import subprocess
 import time
 import re
-from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl, urljoin
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -192,6 +193,7 @@ class RadikoResolver:
         self._station_map: Dict[str, object] = {}
         self._selected_id: Optional[str] = None
         self._auth_token: Optional[str] = None
+        self._area_id: Optional[str] = None
         self._auth_headers: Dict[str, str] = {}
         self._stream_url_cache: Dict[str, str] = {}
         self._init_client()
@@ -478,6 +480,7 @@ class RadikoResolver:
                     # Prefer live/on-air (areafree=0, timefree=0)
                     url_nodes = root.findall(".//url")
                     playlist_urls: List[str] = []
+                    lsid = secrets.token_hex(16)
                     for node in url_nodes:
                         pcu = node.find("playlist_create_url")
                         if pcu is None or not pcu.text:
@@ -490,16 +493,16 @@ class RadikoResolver:
                             playlist_urls.append(pcu.text.strip())
 
                     param_variants = [
-                        {"station_id": station_id, "l": "15", "type": "b"},
-                        {"station_id": station_id, "l": "15"},
+                        {"station_id": station_id, "l": "15", "lsid": lsid, "type": "b"},
+                        {"station_id": station_id, "l": "15", "lsid": lsid},
+                        {"station_id": station_id, "lsid": lsid},
                         {"station_id": station_id},
                     ]
                     for pcu_url in playlist_urls:
                         for params in param_variants:
-                            playlist_url = self._with_query(pcu_url, params, token)
                             if DEBUG:
-                                print(f"Radiko: playlist_create_url -> {playlist_url}")
-                            m3u8 = self._fetch_playlist_m3u8(playlist_url, headers)
+                                print(f"Radiko: playlist_create_url -> {pcu_url}")
+                            m3u8 = self._fetch_playlist_m3u8(pcu_url, params, headers)
                             if m3u8:
                                 return m3u8
 
@@ -525,32 +528,54 @@ class RadikoResolver:
         return None
 
     @staticmethod
-    def _with_query(url: str, extra: Dict[str, str], token: Optional[str]) -> str:
+    def _with_query(url: str, extra: Dict[str, str]) -> str:
         parts = urlparse(url)
         query = dict(parse_qsl(parts.query))
         query.update(extra)
-        if token and "auth_token" not in query:
-            query["auth_token"] = token
         return urlunparse(parts._replace(query=urlencode(query)))
 
-    def _fetch_playlist_m3u8(self, url: str, headers: Dict[str, str]) -> Optional[str]:
+    def _fetch_playlist_m3u8(
+        self, base_url: str, params: Dict[str, str], headers: Dict[str, str]
+    ) -> Optional[str]:
         try:
             import requests  # type: ignore
         except Exception:
             return None
         try:
-            res = requests.get(url, headers=headers, timeout=5)
+            post_headers = {**headers, "Content-Type": "application/x-www-form-urlencoded"}
+            if DEBUG:
+                print(f"Radiko: playlist POST {base_url} params={params}")
+            # Try POST with form data first (radiko expects parameters in body).
+            res = requests.post(
+                base_url,
+                headers=post_headers,
+                data=params,
+                timeout=5,
+            )
             if res.status_code != 200:
                 if DEBUG:
-                    print(f"Radiko: playlist status {res.status_code} for {url}")
+                    print(f"Radiko: playlist status {res.status_code} for {base_url}")
                     print(f"Radiko: playlist body {res.text[:200]!r}")
-                return None
+                # Fallback: GET with query
+                url = self._with_query(base_url, params)
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code != 200:
+                    if DEBUG:
+                        print(f"Radiko: playlist status {res.status_code} for {url}")
+                        print(f"Radiko: playlist body {res.text[:200]!r}")
+                    return None
             body = res.text or ""
             match = re.search(r"https?://[^\s<>\"]+\.m3u8", body)
             if match:
                 return match.group(0)
+            if "#EXTM3U" in body:
+                lines = [line.strip() for line in body.splitlines() if line.strip()]
+                for line in lines:
+                    if line.startswith("#"):
+                        continue
+                    return urljoin(res.url, line)
             if DEBUG:
-                print(f"Radiko: playlist no m3u8 for {url}")
+                print(f"Radiko: playlist no m3u8 for {res.url}")
                 print(f"Radiko: playlist body {body[:200]!r}")
         except Exception as exc:
             if DEBUG:
@@ -658,6 +683,17 @@ class RadikoResolver:
                 if DEBUG and res2 is not None:
                     print(f"Radiko: auth2 failed: {res2.status_code}")
                 return None
+            area_id = None
+            if res2.text:
+                head = res2.text.split(",")[0].strip()
+                if head.startswith("JP"):
+                    area_id = head
+                else:
+                    match = re.search(r"JP\\d{2}", res2.text)
+                    if match:
+                        area_id = match.group(0)
+            if area_id:
+                self._area_id = area_id
 
             self._auth_headers = {
                 "Pragma": "no-cache",
@@ -670,8 +706,11 @@ class RadikoResolver:
                 "Origin": "https://radiko.jp",
                 "Referer": "https://radiko.jp/",
                 "X-Radiko-Authtoken": token,
+                "X-Radiko-AuthToken": token,
                 "X-Radiko-Partialkey": partial,
             }
+            if self._area_id:
+                self._auth_headers["X-Radiko-AreaId"] = self._area_id
             if DEBUG:
                 print("Radiko: auth2 ok")
             return token
