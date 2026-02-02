@@ -6,6 +6,7 @@ import queue
 import signal
 import subprocess
 import time
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -446,6 +447,8 @@ class RadikoResolver:
         urls = [
             f"https://radiko.jp/v3/station/stream/pc_html5/{station_id}.xml",
             f"https://radiko.jp/v3/station/stream/pc/{station_id}.xml",
+            f"http://radiko.jp/v3/station/stream/pc_html5/{station_id}.xml",
+            f"http://radiko.jp/v3/station/stream/pc/{station_id}.xml",
         ]
         try:
             headers = {
@@ -453,6 +456,9 @@ class RadikoResolver:
                 "Origin": "https://radiko.jp",
                 "Referer": "https://radiko.jp/",
             }
+            token = self.auth_token()
+            if token:
+                headers["X-Radiko-Authtoken"] = token
             if DEFAULT_RADIKO_COOKIE:
                 headers["Cookie"] = DEFAULT_RADIKO_COOKIE
             for url in urls:
@@ -461,11 +467,22 @@ class RadikoResolver:
                     if DEBUG:
                         print(f"Radiko: stream xml status {res.status_code} for {station_id} ({url})")
                     continue
-                root = ET.fromstring(res.text)
-                nodes = root.findall(".//url")
-                for node in nodes:
-                    if node.text:
-                        return node.text.strip()
+                text = res.text
+                try:
+                    root = ET.fromstring(text)
+                    nodes = root.findall(".//url")
+                    for node in nodes:
+                        if node.text:
+                            return node.text.strip()
+                except Exception:
+                    pass
+                # Fallback: regex for any m3u8 URL in the XML.
+                match = re.search(r"https?://[^\\s<>\"]+\\.m3u8", text)
+                if match:
+                    return match.group(0)
+                if DEBUG:
+                    print(f"Radiko: stream xml no url for {station_id} ({url})")
+                    print(f\"Radiko: stream xml body {text[:200]!r}\")
         except Exception as exc:
             if DEBUG:
                 print(f"Radiko: stream xml failed for {station_id}: {exc!r}")
