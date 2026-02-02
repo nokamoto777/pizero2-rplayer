@@ -102,7 +102,7 @@ class LineOutDisplay:
             cs = _env_int("RPLAYER_ST7789_CS", 1)
             dc = _env_int("RPLAYER_ST7789_DC", 9)
             backlight = _env_int("RPLAYER_ST7789_BACKLIGHT", 13)
-            speed_hz = _env_int("RPLAYER_ST7789_SPEED_HZ", 80_000_000)
+            speed_hz = _env_int("RPLAYER_ST7789_SPEED_HZ", 20_000_000)
             self._display = display_cls(
                 rotation=rotation,
                 port=port,
