@@ -263,7 +263,7 @@ class RadikoResolver:
             url = str(self._client.get_stream(station))
             if DEBUG:
                 print(f"Radiko: stream_url for {station_id} -> {url}")
-            return url
+            return self._normalize_stream_url(url, station_id)
         except Exception as exc:
             if DEBUG:
                 print(f"Radiko: stream_url failed for {station_id}: {exc!r}")
@@ -272,7 +272,7 @@ class RadikoResolver:
                     url = str(self._client.get_stream(station))
                     if DEBUG:
                         print(f"Radiko: stream_url retry for {station_id} -> {url}")
-                    return url
+                    return self._normalize_stream_url(url, station_id)
                 except Exception as exc2:
                     if DEBUG:
                         print(f"Radiko: stream_url retry failed for {station_id}: {exc2!r}")
@@ -281,7 +281,7 @@ class RadikoResolver:
                 url = str(self._client.get_stream(station_id))
                 if DEBUG:
                     print(f"Radiko: stream_url (id) for {station_id} -> {url}")
-                return url
+                return self._normalize_stream_url(url, station_id)
             except Exception as exc3:
                 if DEBUG:
                     print(f"Radiko: stream_url (id) failed for {station_id}: {exc3!r}")
@@ -370,6 +370,24 @@ class RadikoResolver:
                 if isinstance(value, str) and value:
                     return value
         return None
+
+    @staticmethod
+    def _normalize_stream_url(url: str, station_id: str) -> str:
+        if not url:
+            return url
+        # If the URL already contains the station id, keep it.
+        if f"/{station_id}/" in url:
+            return url
+        # Replace the first path segment after domain with the target station id.
+        try:
+            parts = url.split("/")
+            if len(parts) > 3:
+                parts[3] = station_id
+                return "/".join(parts)
+        except Exception:
+            pass
+        # Fallback template.
+        return f"http://f-radiko.smartstream.ne.jp/{station_id}/_definst_/simul-stream.stream/playlist.m3u8"
 
     def _get_token_from_methods(self) -> Optional[str]:
         if not self._client:
