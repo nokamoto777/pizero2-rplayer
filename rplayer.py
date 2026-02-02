@@ -489,25 +489,27 @@ class RadikoResolver:
                         else:
                             playlist_urls.append(pcu.text.strip())
 
+                    param_variants = [
+                        {"station_id": station_id, "l": "15", "type": "b"},
+                        {"station_id": station_id, "l": "15"},
+                        {"station_id": station_id},
+                    ]
                     for pcu_url in playlist_urls:
-                        playlist_url = self._with_query(
-                            pcu_url,
-                            {
-                                "station_id": station_id,
-                                "l": "15",
-                                "type": "b",
-                            },
-                        )
-                        if DEBUG:
-                            print(f"Radiko: playlist_create_url -> {playlist_url}")
-                        m3u8 = self._fetch_playlist_m3u8(playlist_url, headers)
-                        if m3u8:
-                            return m3u8
+                        for params in param_variants:
+                            playlist_url = self._with_query(pcu_url, params, token)
+                            if DEBUG:
+                                print(f"Radiko: playlist_create_url -> {playlist_url}")
+                            m3u8 = self._fetch_playlist_m3u8(playlist_url, headers)
+                            if m3u8:
+                                return m3u8
 
                     # Fallback: any element text that looks like an HLS URL.
                     for elem in root.iter():
                         if elem.text and "http" in elem.text and "m3u8" in elem.text:
-                            return elem.text.strip()
+                            candidate = elem.text.strip()
+                            if "playlist.m3u8" in candidate and "station_id=" not in candidate:
+                                continue
+                            return candidate
                 except Exception:
                     pass
                 # Fallback: regex for any m3u8 URL in the XML.
@@ -523,10 +525,12 @@ class RadikoResolver:
         return None
 
     @staticmethod
-    def _with_query(url: str, extra: Dict[str, str]) -> str:
+    def _with_query(url: str, extra: Dict[str, str], token: Optional[str]) -> str:
         parts = urlparse(url)
         query = dict(parse_qsl(parts.query))
         query.update(extra)
+        if token and "auth_token" not in query:
+            query["auth_token"] = token
         return urlunparse(parts._replace(query=urlencode(query)))
 
     def _fetch_playlist_m3u8(self, url: str, headers: Dict[str, str]) -> Optional[str]:
@@ -539,6 +543,7 @@ class RadikoResolver:
             if res.status_code != 200:
                 if DEBUG:
                     print(f"Radiko: playlist status {res.status_code} for {url}")
+                    print(f"Radiko: playlist body {res.text[:200]!r}")
                 return None
             body = res.text or ""
             match = re.search(r"https?://[^\s<>\"]+\.m3u8", body)
