@@ -258,19 +258,19 @@ class RadikoResolver:
             return None
         try:
             self._ensure_selected(station, station_id)
-            url = str(self._client.get_stream(station))
+            url = self._get_stream_from_station(station, station_id)
             if DEBUG:
                 print(f"Radiko: stream_url for {station_id} -> {url}")
-            return self._normalize_stream_url(url, station_id)
+            return url
         except Exception as exc:
             if DEBUG:
                 print(f"Radiko: stream_url failed for {station_id}: {exc!r}")
             if self._maybe_retry_after_select(exc, station, station_id):
                 try:
-                    url = str(self._client.get_stream(station))
+                    url = self._get_stream_from_station(station, station_id)
                     if DEBUG:
                         print(f"Radiko: stream_url retry for {station_id} -> {url}")
-                    return self._normalize_stream_url(url, station_id)
+                    return url
                 except Exception as exc2:
                     if DEBUG:
                         print(f"Radiko: stream_url retry failed for {station_id}: {exc2!r}")
@@ -279,7 +279,7 @@ class RadikoResolver:
                 url = str(self._client.get_stream(station_id))
                 if DEBUG:
                     print(f"Radiko: stream_url (id) for {station_id} -> {url}")
-                return self._normalize_stream_url(url, station_id)
+                return url
             except Exception as exc3:
                 if DEBUG:
                     print(f"Radiko: stream_url (id) failed for {station_id}: {exc3!r}")
@@ -369,23 +369,21 @@ class RadikoResolver:
                     return value
         return None
 
-    @staticmethod
-    def _normalize_stream_url(url: str, station_id: str) -> str:
-        if not url:
-            return url
-        # If the URL already contains the station id, keep it.
-        if f"/{station_id}/" in url:
-            return url
-        # Replace the first path segment after domain with the target station id.
+    def _get_stream_from_station(self, station: object, station_id: str) -> str:
+        if hasattr(station, "get_stream"):
+            try:
+                return str(station.get_stream())
+            except Exception:
+                pass
         try:
-            parts = url.split("/")
-            if len(parts) > 3:
-                parts[3] = station_id
-                return "/".join(parts)
+            return str(self._client.get_stream(station))
         except Exception:
             pass
-        # Fallback template.
-        return f"http://f-radiko.smartstream.ne.jp/{station_id}/_definst_/simul-stream.stream/playlist.m3u8"
+        try:
+            return str(self._client.get_stream())
+        except TypeError:
+            pass
+        return str(self._client.get_stream(station_id))
 
     def _get_token_from_methods(self) -> Optional[str]:
         if not self._client:
@@ -573,14 +571,11 @@ class Player:
         label = station.name or station.id
         stream_url = station.stream_url
         if not stream_url and self._resolver:
-            if self._radiko_token:
-                stream_url = self._resolver.live_stream_url(station.id)
-            else:
-                stream_url = self._stream_cache.get(station.id)
-                if not stream_url:
-                    stream_url = self._resolver.stream_url(station.id)
-                    if stream_url:
-                        self._stream_cache[station.id] = stream_url
+            stream_url = self._stream_cache.get(station.id)
+            if not stream_url:
+                stream_url = self._resolver.stream_url(station.id)
+                if stream_url:
+                    self._stream_cache[station.id] = stream_url
 
         if not stream_url:
             self._display.show(label, "stream_url missing")
