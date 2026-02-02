@@ -241,16 +241,14 @@ class RadikoResolver:
 
     def auth_headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = dict(self._auth_headers)
-        for attr in ("headers", "auth_headers", "stream_headers", "request_headers"):
-            value = getattr(self._client, attr, None) if self._client else None
-            if isinstance(value, dict):
-                for k, v in value.items():
-                    if isinstance(k, str) and isinstance(v, str):
-                        headers[k] = v
         token = self.auth_token()
         if token and "X-Radiko-Authtoken" not in headers:
             headers["X-Radiko-Authtoken"] = token
         return headers
+
+    @staticmethod
+    def live_stream_url(station_id: str) -> str:
+        return f"http://f-radiko.smartstream.ne.jp/{station_id}/_definst_/simul-stream.stream/playlist.m3u8"
 
     def stream_url(self, station_id: str) -> Optional[str]:
         if not self._client:
@@ -491,7 +489,19 @@ class RadikoResolver:
                     print(f"Radiko: auth2 failed: {res2.status_code}")
                 return None
 
-            self._auth_headers = headers2
+            self._auth_headers = {
+                "Pragma": "no-cache",
+                "Cache-Control": "no-cache",
+                "X-Radiko-App": DEFAULT_RADIKO_APP,
+                "X-Radiko-App-Version": DEFAULT_RADIKO_APP_VER,
+                "X-Radiko-Device": DEFAULT_RADIKO_DEVICE,
+                "X-Radiko-User": DEFAULT_RADIKO_USER,
+                "User-Agent": "Mozilla/5.0",
+                "Origin": "https://radiko.jp",
+                "Referer": "https://radiko.jp/",
+                "X-Radiko-Authtoken": token,
+                "X-Radiko-Partialkey": partial,
+            }
             if DEBUG:
                 print("Radiko: auth2 ok")
             return token
@@ -563,11 +573,14 @@ class Player:
         label = station.name or station.id
         stream_url = station.stream_url
         if not stream_url and self._resolver:
-            stream_url = self._stream_cache.get(station.id)
-            if not stream_url:
-                stream_url = self._resolver.stream_url(station.id)
-                if stream_url:
-                    self._stream_cache[station.id] = stream_url
+            if self._radiko_token:
+                stream_url = self._resolver.live_stream_url(station.id)
+            else:
+                stream_url = self._stream_cache.get(station.id)
+                if not stream_url:
+                    stream_url = self._resolver.stream_url(station.id)
+                    if stream_url:
+                        self._stream_cache[station.id] = stream_url
 
         if not stream_url:
             self._display.show(label, "stream_url missing")
