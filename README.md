@@ -5,6 +5,7 @@ Radiko player for Raspberry Pi Zero 2 + PIMORONI Line Out (64-bit Raspberry Pi O
 - Raspberry Pi Zero 2 + PIMORONI Line Out
 - Python-based radiko player
 - Line Out display shows current station and song title while playing
+- Display shows current program image under the text (updates on program/station change)
 - A/B buttons change station
 - Fresh OS install (no prior setup)
 
@@ -18,6 +19,7 @@ Components:
 - **Audio playback**: `mpd` plays the radiko stream URL.
 - **Station control**: Python app manages station list, starts/stops mpd playback.
 - **Metadata**: Python app polls radiko program info and updates the display.
+- **Program image**: Python app fetches the current program image and draws it under the text.
 - **UI**: A/B buttons -> previous/next station.
 - **Display**: Show station name + current track or program title.
 
@@ -163,6 +165,12 @@ RPLAYER_DISABLE_GPIO=1 python3 rplayer.py
 Enable debug logs to the console:
 ```bash
 RPLAYER_DEBUG=1 python3 rplayer.py
+```
+
+### Program image refresh
+Program schedules are refreshed hourly by default. Override:
+```bash
+RPLAYER_PROGRAM_REFRESH_SEC=3600 python3 rplayer.py
 ```
 
 ### Troubleshooting checklist

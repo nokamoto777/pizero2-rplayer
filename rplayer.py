@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import base64
+import io
 import json
 import os
 import queue
@@ -8,6 +9,8 @@ import secrets
 import subprocess
 import time
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl, urljoin
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -20,6 +23,7 @@ DEFAULT_BUTTON_A_PIN = 5
 DEFAULT_BUTTON_B_PIN = 6
 DEFAULT_REFRESH_SEC = 1.0
 DEFAULT_METADATA_SEC = 10.0
+DEFAULT_PROGRAM_REFRESH_SEC = float(os.getenv("RPLAYER_PROGRAM_REFRESH_SEC", "3600"))
 DEBUG = os.getenv("RPLAYER_DEBUG") == "1"
 DEFAULT_ALSA_DEVICE = os.getenv("RPLAYER_ALSA_DEVICE", "hw:1,0")
 DEFAULT_FFMPEG = os.getenv("RPLAYER_FFMPEG", "ffmpeg")
@@ -46,6 +50,14 @@ class Station:
     id: str
     name: str
     stream_url: str
+
+
+@dataclass
+class ProgramInfo:
+    title: str
+    img_url: str
+    ft: datetime
+    to: datetime
 
 
 class ConsoleDisplay:
@@ -144,7 +156,7 @@ class LineOutDisplay:
                 continue
         return image_font.load_default()
 
-    def show(self, line1: str, line2: str) -> None:
+    def show(self, line1: str, line2: str, image=None) -> None:
         if not self._display:
             self._fallback.show(line1, line2)
             return
@@ -155,7 +167,20 @@ class LineOutDisplay:
             line1 = _fit_text(self._draw, self._font, line1, self._width - 4)
             line2 = _fit_text(self._draw, self._font, line2, self._width - 4)
             self._draw.text((2, 2), line1, font=self._font, fill=(255, 255, 255))
-            self._draw.text((2, 18), line2, font=self._font, fill=(255, 255, 255))
+            line2_y = 2 + self._font_size + 2
+            self._draw.text((2, line2_y), line2, font=self._font, fill=(255, 255, 255))
+            if image is not None:
+                img_top = line2_y + self._font_size + 4
+                if img_top < self._height - 2:
+                    target_w = self._width - 4
+                    target_h = self._height - img_top - 2
+                    try:
+                        resized = _fit_image(image, target_w, target_h)
+                        x = (self._width - resized.width) // 2
+                        y = img_top + (target_h - resized.height) // 2
+                        self._image.paste(resized, (x, y))
+                    except Exception:
+                        pass
             self._display.display(self._image)
         except Exception:
             self._fallback.show(line1, line2)
@@ -217,6 +242,7 @@ class RadikoResolver:
         self._area_id: Optional[str] = None
         self._auth_headers: Dict[str, str] = {}
         self._stream_url_cache: Dict[str, str] = {}
+        self._program_cache: Dict[str, Tuple[float, str, List[ProgramInfo]]] = {}
         self._init_client()
 
     def _init_client(self) -> None:
@@ -272,6 +298,69 @@ class RadikoResolver:
         if token and "X-Radiko-Authtoken" not in headers:
             headers["X-Radiko-Authtoken"] = token
         return headers
+
+    def current_program(self, station_id: str) -> Optional[ProgramInfo]:
+        programs = self._get_programs(station_id)
+        if not programs:
+            return None
+        now = datetime.now(ZoneInfo("Asia/Tokyo"))
+        for program in programs:
+            if program.ft <= now < program.to:
+                return program
+        return None
+
+    def _get_programs(self, station_id: str) -> List[ProgramInfo]:
+        now = datetime.now(ZoneInfo("Asia/Tokyo"))
+        date_key = now.strftime("%Y%m%d")
+        cached = self._program_cache.get(station_id)
+        if cached:
+            fetched_at, cached_date, programs = cached
+            if cached_date == date_key and (time.time() - fetched_at) < DEFAULT_PROGRAM_REFRESH_SEC:
+                return programs
+        programs = self._fetch_programs(station_id, date_key)
+        if programs:
+            self._program_cache[station_id] = (time.time(), date_key, programs)
+        return programs
+
+    def _fetch_programs(self, station_id: str, date_key: str) -> List[ProgramInfo]:
+        try:
+            import requests  # type: ignore
+        except Exception:
+            return []
+        url = f"https://radiko.jp/v3/program/station/date/{date_key}/{station_id}.xml"
+        try:
+            res = requests.get(url, timeout=5)
+            if res.status_code != 200:
+                if DEBUG:
+                    print(f"Radiko: program status {res.status_code} ({url})")
+                return []
+            root = ET.fromstring(res.text)
+            station_node = root.find(".//station")
+            if station_node is None:
+                return []
+            programs: List[ProgramInfo] = []
+            for prog in station_node.findall(".//prog"):
+                ft_raw = prog.attrib.get("ft", "")
+                to_raw = prog.attrib.get("to", "")
+                title = (prog.findtext("title") or "").strip()
+                img = (prog.findtext("img") or "").strip()
+                if not ft_raw or not to_raw:
+                    continue
+                try:
+                    ft = datetime.strptime(ft_raw, "%Y%m%d%H%M%S").replace(
+                        tzinfo=ZoneInfo("Asia/Tokyo")
+                    )
+                    to = datetime.strptime(to_raw, "%Y%m%d%H%M%S").replace(
+                        tzinfo=ZoneInfo("Asia/Tokyo")
+                    )
+                except ValueError:
+                    continue
+                programs.append(ProgramInfo(title=title, img_url=img, ft=ft, to=to))
+            return programs
+        except Exception as exc:
+            if DEBUG:
+                print(f"Radiko: program fetch failed: {exc!r}")
+            return []
 
     @staticmethod
     def live_stream_url(station_id: str) -> str:
@@ -759,6 +848,10 @@ class Player:
         self._index = 0
         self._last_meta = ""
         self._last_meta_at = 0.0
+        self._program_title = ""
+        self._program_image = None
+        self._program_image_url = ""
+        self._last_program_at = 0.0
         self._stream_cache: Dict[str, str] = {}
         self._title_cache: Dict[str, Tuple[str, float]] = {}
         self._ffmpeg: Optional[subprocess.Popen] = None
@@ -802,6 +895,10 @@ class Player:
     def _start_current(self) -> None:
         station = self.current_station()
         label = station.name or station.id
+        self._program_title = ""
+        self._program_image = None
+        self._program_image_url = ""
+        self._last_program_at = 0.0
         stream_url = station.stream_url
         if not stream_url and self._resolver:
             cached = self._stream_cache.get(station.id)
@@ -845,14 +942,17 @@ class Player:
             self.next_station()
 
         now = time.time()
+        if now - self._last_program_at >= DEFAULT_PROGRAM_REFRESH_SEC:
+            self._update_program_info()
+            self._last_program_at = now
         if now - self._last_meta_at >= DEFAULT_METADATA_SEC:
             self._last_meta = self._get_title()
             self._last_meta_at = now
 
         current = self.current_station()
         line1 = current.name or current.id or "Station"
-        line2 = self._last_meta if self._last_meta else "Now Playing"
-        self._display.show(line1, line2)
+        line2 = self._program_title or self._last_meta or "Now Playing"
+        self._display.show(line1, line2, self._program_image)
 
     def _get_title(self) -> str:
         station = self.current_station()
@@ -865,6 +965,33 @@ class Player:
                 self._title_cache[station.id] = (title, time.time())
                 return title
         return get_mpd_title()
+
+    def _update_program_info(self) -> None:
+        if not self._resolver:
+            return
+        program = self._resolver.current_program(self.current_station().id)
+        if not program:
+            return
+        if program.title:
+            self._program_title = program.title
+        if not program.img_url or program.img_url == self._program_image_url:
+            return
+        self._program_image_url = program.img_url
+        try:
+            import requests  # type: ignore
+            from PIL import Image  # type: ignore
+
+            res = requests.get(program.img_url, timeout=5)
+            if res.status_code != 200:
+                if DEBUG:
+                    print(f"Radiko: program image status {res.status_code}")
+                return
+            self._program_image = Image.open(
+                io.BytesIO(res.content)
+            ).convert("RGB")
+        except Exception as exc:
+            if DEBUG:
+                print(f"Radiko: program image fetch failed: {exc!r}")
 
     def _load_radiko_token(self) -> None:
         if not self._resolver or not self._resolver.available():
@@ -954,6 +1081,20 @@ def load_stations(path: str) -> List[Station]:
             )
         )
     return stations
+
+
+def _fit_image(image, max_width: int, max_height: int):
+    if image is None:
+        return None
+    width, height = image.size
+    if width == 0 or height == 0:
+        return image
+    scale = min(max_width / width, max_height / height, 1.0)
+    new_w = max(1, int(width * scale))
+    new_h = max(1, int(height * scale))
+    if new_w == width and new_h == height:
+        return image
+    return image.resize((new_w, new_h))
 
 
 def _fit_text(draw, font, text: str, max_width: int) -> str:
