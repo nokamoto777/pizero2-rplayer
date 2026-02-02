@@ -65,6 +65,7 @@ class LineOutDisplay:
         self._image = None
         self._draw = None
         self._font = None
+        self._font_size = _env_int("RPLAYER_FONT_SIZE", 16)
         self._width = 0
         self._height = 0
         self._fallback = ConsoleDisplay()
@@ -115,13 +116,33 @@ class LineOutDisplay:
             self._height = getattr(self._display, "height", 240)
             self._image = Image.new("RGB", (self._width, self._height))
             self._draw = ImageDraw.Draw(self._image)
-            self._font = ImageFont.load_default()
+            self._font = self._load_font(ImageFont)
             if DEBUG:
                 print(f"Display init: {self._width}x{self._height}")
         except Exception:
             if DEBUG:
                 print("Display init: failed")
             self._display = None
+
+    def _load_font(self, image_font) -> object:
+        font_path = os.getenv("RPLAYER_FONT", "").strip()
+        candidates = [font_path] if font_path else []
+        candidates.extend(
+            [
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansCJKjp-Regular.otf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ]
+        )
+        for path in candidates:
+            if not path:
+                continue
+            try:
+                return image_font.truetype(path, self._font_size)
+            except Exception:
+                continue
+        return image_font.load_default()
 
     def show(self, line1: str, line2: str) -> None:
         if not self._display:

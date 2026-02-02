@@ -51,7 +51,8 @@ Assume: Raspberry Pi OS 64-bit (trixie base), freshly installed.
 sudo apt update
 sudo apt -y full-upgrade
 sudo apt -y install python3 python3-pip python3-venv git mpd mpc ffmpeg \
-  python3-gpiozero python3-rpi.gpio python3-spidev python3-pil python3-numpy
+  python3-gpiozero python3-rpi.gpio python3-spidev python3-pil python3-numpy \
+  fonts-noto-cjk
 ```
 
 2) Enable SPI (for Line Out) and reboot:
@@ -171,6 +172,11 @@ RPLAYER_DEBUG=1 python3 rplayer.py
 ```bash
 RPLAYER_ST7789_ROTATION=0 python3 rplayer.py
 ```
+- If text looks garbled (mojibake), install a CJK font and set it:
+```bash
+sudo apt -y install fonts-noto-cjk
+RPLAYER_FONT=/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc python3 rplayer.py
+```
 - If `Radiko: stream_url failed ...` appears, check:
   - You are inside Japan or using a valid radiko premium environment (radiko is geo-restricted).
   - System time/timezone are correct (`timedatectl`).
@@ -205,7 +211,7 @@ RPLAYER_ST7789_PORT=0 \
 RPLAYER_ST7789_CS=1 \
 RPLAYER_ST7789_DC=9 \
 RPLAYER_ST7789_BACKLIGHT=13 \
-RPLAYER_ST7789_SPEED_HZ=80000000 \
+RPLAYER_ST7789_SPEED_HZ=20000000 \
 python3 rplayer.py
 ```
 
