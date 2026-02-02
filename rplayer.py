@@ -525,6 +525,9 @@ class Player:
             self._display.show(self.current_station().name or self.current_station().id, "Only one station")
             return
         self._index = (self._index + 1) % len(self._stations)
+        if DEBUG:
+            current = self.current_station()
+            print(f"Station next -> {self._index}: {current.id} {current.name}")
         self._start_current()
 
     def prev_station(self) -> None:
@@ -532,6 +535,9 @@ class Player:
             self._display.show(self.current_station().name or self.current_station().id, "Only one station")
             return
         self._index = (self._index - 1) % len(self._stations)
+        if DEBUG:
+            current = self.current_station()
+            print(f"Station prev -> {self._index}: {current.id} {current.name}")
         self._start_current()
 
     def _start_current(self) -> None:
@@ -550,6 +556,8 @@ class Player:
             return
 
         self._stop_ffmpeg()
+        if DEBUG:
+            print(f"Play station {station.id} ({label}) -> {stream_url}")
         if stream_url.endswith(".m3u8") and not self._radiko_token:
             self._display.show(label, "radiko token missing")
             if DEBUG:
