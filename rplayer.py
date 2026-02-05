@@ -55,6 +55,7 @@ class Station:
     id: str
     name: str
     stream_url: str
+    image_url: str = ""
 
 
 @dataclass
@@ -897,7 +898,8 @@ class WorldRadioResolver:
                 stream = str(item.get("url_resolved") or item.get("url") or "").strip()
                 if not name or not stream:
                     continue
-                stations.append(Station(id=name, name=name, stream_url=stream))
+                image_url = str(item.get("favicon") or "").strip()
+                stations.append(Station(id=name, name=name, stream_url=stream, image_url=image_url))
             if stations:
                 self._cache = stations
                 self._last_fetch = time.time()
@@ -932,6 +934,10 @@ class Player:
         self._program_image_url = ""
         self._last_program_at = 0.0
         self._world_station: Optional[Station] = None
+        self._world_history: List[Station] = []
+        self._world_index = -1
+        self._world_image = None
+        self._world_image_url = ""
         self._shutdown_confirm_at: Optional[float] = None
         self._state_path = os.getenv("RPLAYER_STATE", "state.json")
         self._stream_cache: Dict[str, str] = {}
@@ -959,11 +965,7 @@ class Player:
 
     def next_station(self) -> None:
         if self._mode == "world":
-            self._world_station = self._world.random_station()
-            if DEBUG and self._world_station:
-                print(f"WorldRadio: next -> {self._world_station.name}")
-            self._start_current()
-            self._save_state()
+            self._world_next()
             return
         if len(self._stations) < 2:
             self._display.show(self.current_station().name or self.current_station().id, "Only one station")
@@ -977,11 +979,7 @@ class Player:
 
     def prev_station(self) -> None:
         if self._mode == "world":
-            self._world_station = self._world.random_station()
-            if DEBUG and self._world_station:
-                print(f"WorldRadio: prev -> {self._world_station.name}")
-            self._start_current()
-            self._save_state()
+            self._world_prev()
             return
         if len(self._stations) < 2:
             self._display.show(self.current_station().name or self.current_station().id, "Only one station")
@@ -1000,6 +998,8 @@ class Player:
         self._program_image = None
         self._program_image_url = ""
         self._last_program_at = 0.0
+        self._world_image = None
+        self._world_image_url = ""
         stream_url = station.stream_url
         if not stream_url and self._resolver:
             cached = self._stream_cache.get(station.id)
@@ -1035,6 +1035,8 @@ class Player:
         self._display.show(label, "Loading...")
         self._last_meta = ""
         self._last_meta_at = 0.0
+        if self._mode == "world":
+            self._update_world_image()
 
     def tick(self) -> None:
         action = self._buttons.poll()
@@ -1077,7 +1079,7 @@ class Player:
             image = self._program_image
         else:
             line2 = self._last_meta or "World Radio"
-            image = None
+            image = self._world_image
         self._display.show(line1, line2, image)
 
     def _get_title(self) -> str:
@@ -1130,7 +1132,7 @@ class Player:
         if self._mode == "radiko":
             self._mode = "world"
             if not self._world_station:
-                self._world_station = self._world.random_station()
+                self._world_next()
         else:
             self._mode = "radiko"
         if DEBUG:
@@ -1145,6 +1147,55 @@ class Player:
             subprocess.Popen(["sudo", "shutdown", "-h", "now"])
         except Exception:
             pass
+
+    def _world_next(self) -> None:
+        if self._world_index + 1 < len(self._world_history):
+            self._world_index += 1
+            self._world_station = self._world_history[self._world_index]
+        else:
+            station = self._world.random_station()
+            if not station:
+                return
+            self._world_history.append(station)
+            self._world_index = len(self._world_history) - 1
+            self._world_station = station
+        if DEBUG and self._world_station:
+            print(f"WorldRadio: next -> {self._world_station.name}")
+        self._start_current()
+        self._save_state()
+
+    def _world_prev(self) -> None:
+        if self._world_index > 0:
+            self._world_index -= 1
+            self._world_station = self._world_history[self._world_index]
+            if DEBUG and self._world_station:
+                print(f"WorldRadio: prev -> {self._world_station.name}")
+            self._start_current()
+            self._save_state()
+            return
+        # If no previous history, pick a new random station.
+        self._world_next()
+
+    def _update_world_image(self) -> None:
+        station = self.current_station()
+        if not station.image_url:
+            return
+        if station.image_url == self._world_image_url:
+            return
+        self._world_image_url = station.image_url
+        try:
+            import requests  # type: ignore
+            from PIL import Image  # type: ignore
+
+            res = requests.get(station.image_url, timeout=5)
+            if res.status_code != 200:
+                if DEBUG:
+                    print(f"WorldRadio: image status {res.status_code}")
+                return
+            self._world_image = Image.open(io.BytesIO(res.content)).convert("RGB")
+        except Exception as exc:
+            if DEBUG:
+                print(f"WorldRadio: image fetch failed: {exc!r}")
 
     def _load_state(self) -> None:
         try:
@@ -1165,10 +1216,14 @@ class Player:
         else:
             name = str(data.get("world_name") or "").strip()
             url = str(data.get("world_url") or "").strip()
+            image_url = str(data.get("world_image_url") or "").strip()
             if name and url:
-                self._world_station = Station(id=name, name=name, stream_url=url)
+                self._world_station = Station(id=name, name=name, stream_url=url, image_url=image_url)
             if not self._world_station:
                 self._world_station = self._world.random_station()
+            if self._world_station:
+                self._world_history = [self._world_station]
+                self._world_index = 0
         self._start_current()
 
     def _save_state(self) -> None:
@@ -1180,6 +1235,7 @@ class Player:
                 if self._world_station:
                     data["world_name"] = self._world_station.name
                     data["world_url"] = self._world_station.stream_url
+                    data["world_image_url"] = self._world_station.image_url
             with open(self._state_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
@@ -1263,6 +1319,7 @@ def load_stations(path: str) -> List[Station]:
                 id=str(item.get("id", "")).strip(),
                 name=str(item.get("name", "")).strip(),
                 stream_url=str(item.get("stream_url", "")).strip(),
+                image_url=str(item.get("image_url", "")).strip(),
             )
         )
     return stations

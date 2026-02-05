@@ -1,13 +1,16 @@
 [Unit]
-Description=Radiko Player
-After=network-online.target mpd.service
+Description=RPlayer (Radiko + World Radio)
+After=network-online.target sound.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/pizero2-rplayer
-ExecStart=/usr/bin/python3 /home/pi/pizero2-rplayer/rplayer.py
+WorkingDirectory=/opt/pizero2-rplayer
+Environment=RPLAYER_ALSA_DEVICE=hw:1,0
+Environment=RPLAYER_FONT=/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc
+Environment=RPLAYER_ST7789_SPEED_HZ=20000000
+ExecStart=/opt/pizero2-rplayer/.venv/bin/python /opt/pizero2-rplayer/rplayer.py
 Restart=always
 RestartSec=2
 

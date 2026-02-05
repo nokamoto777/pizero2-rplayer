@@ -181,7 +181,8 @@ RPLAYER_PROGRAM_REFRESH_SEC=3600 python3 rplayer.py
 
 ### World radio mode
 World radio uses `all.api.radio-browser.info` and picks a random station.
-Press A/B to switch to another random station.
+A/B navigates random stations with history (A goes back to the previously played station).
+Station image (favicon) is shown under the text when available.
 
 ### Last station resume
 The app saves the last station/mode in `state.json` (override with `RPLAYER_STATE`).
@@ -248,11 +249,11 @@ python3 rplayer.py
 ```
 
 ### stations.json
-- List of stations and IDs.
+- List of stations and IDs (image_url is optional).
 - Example:
 ```json
 [
-  {"id": "TBS", "name": "", "stream_url": ""}
+  {"id": "TBS", "name": "", "stream_url": "", "image_url": ""}
 ]
 ```
 `stream_url` should be the final playable URL (MPD can read it).  
@@ -281,15 +282,18 @@ If `stream_url` is empty, the app will try to resolve it via `radiko.py`.
 `services/rplayer.service`:
 ```
 [Unit]
-Description=Radiko Player
-After=network-online.target mpd.service
+Description=RPlayer (Radiko + World Radio)
+After=network-online.target sound.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/pizero2-rplayer
-ExecStart=/usr/bin/python3 /home/pi/pizero2-rplayer/rplayer.py
+WorkingDirectory=/opt/pizero2-rplayer
+Environment=RPLAYER_ALSA_DEVICE=hw:1,0
+Environment=RPLAYER_FONT=/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc
+Environment=RPLAYER_ST7789_SPEED_HZ=20000000
+ExecStart=/opt/pizero2-rplayer/.venv/bin/python /opt/pizero2-rplayer/rplayer.py
 Restart=always
 RestartSec=2
 
