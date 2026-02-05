@@ -7,6 +7,8 @@ Radiko player for Raspberry Pi Zero 2 + PIMORONI Line Out (64-bit Raspberry Pi O
 - Line Out display shows current station and song title while playing
 - Display shows current program image under the text (updates on program/station change)
 - A/B buttons change station
+- X button toggles Radiko / World Radio mode
+- Y double-click opens shutdown confirm (press X to shutdown)
 - Fresh OS install (no prior setup)
 
 ## Hardware
@@ -21,6 +23,8 @@ Components:
 - **Metadata**: Python app polls radiko program info and updates the display.
 - **Program image**: Python app fetches the current program image and draws it under the text.
 - **UI**: A/B buttons -> previous/next station.
+- **Mode switch**: X toggles Radiko / World Radio.
+- **Shutdown**: Y double-click -> confirm, then X to shutdown.
 - **Display**: Show station name + current track or program title.
 
 Data flow:
@@ -147,13 +151,15 @@ This overwrites `stations.json` with the IDs/names available from radiko.
 Defaults in `rplayer.py`:
 - A button: BCM 5
 - B button: BCM 6
+- X button: BCM 16
+- Y button: BCM 24
 
 Line Out buttons are wired to BCM 5/6/16/24 (active low).  
 If A/B are swapped, change the env vars below.
 
 Override with env vars:
 ```bash
-RPLAYER_BUTTON_A=5 RPLAYER_BUTTON_B=6 python3 rplayer.py
+RPLAYER_BUTTON_A=5 RPLAYER_BUTTON_B=6 RPLAYER_BUTTON_X=16 RPLAYER_BUTTON_Y=24 python3 rplayer.py
 ```
 
 If GPIO libraries are not available, you can disable button handling:
@@ -172,6 +178,13 @@ Program schedules are refreshed hourly by default. Override:
 ```bash
 RPLAYER_PROGRAM_REFRESH_SEC=3600 python3 rplayer.py
 ```
+
+### World radio mode
+World radio uses `all.api.radio-browser.info` and picks a random station.
+Press A/B to switch to another random station.
+
+### Last station resume
+The app saves the last station/mode in `state.json` (override with `RPLAYER_STATE`).
 
 ### Troubleshooting checklist
 - `mpd` must be running when using manual `stream_url` (`sudo systemctl enable --now mpd`).

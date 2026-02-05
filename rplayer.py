@@ -9,6 +9,7 @@ import secrets
 import subprocess
 import time
 import re
+import random
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl, urljoin
@@ -21,9 +22,13 @@ DEFAULT_MPD_HOST = "localhost"
 DEFAULT_MPD_PORT = "6600"
 DEFAULT_BUTTON_A_PIN = 5
 DEFAULT_BUTTON_B_PIN = 6
+DEFAULT_BUTTON_X_PIN = 16
+DEFAULT_BUTTON_Y_PIN = 24
 DEFAULT_REFRESH_SEC = 1.0
 DEFAULT_METADATA_SEC = 10.0
 DEFAULT_PROGRAM_REFRESH_SEC = float(os.getenv("RPLAYER_PROGRAM_REFRESH_SEC", "3600"))
+DEFAULT_DOUBLE_CLICK_SEC = float(os.getenv("RPLAYER_DOUBLE_CLICK_SEC", "0.5"))
+DEFAULT_SHUTDOWN_CONFIRM_SEC = float(os.getenv("RPLAYER_SHUTDOWN_CONFIRM_SEC", "10"))
 DEBUG = os.getenv("RPLAYER_DEBUG") == "1"
 DEFAULT_ALSA_DEVICE = os.getenv("RPLAYER_ALSA_DEVICE", "hw:1,0")
 DEFAULT_FFMPEG = os.getenv("RPLAYER_FFMPEG", "ffmpeg")
@@ -187,15 +192,18 @@ class LineOutDisplay:
 
 
 class ButtonInput:
-    def __init__(self, a_pin: int, b_pin: int) -> None:
+    def __init__(self, a_pin: int, b_pin: int, x_pin: int, y_pin: int) -> None:
         self._queue: "queue.Queue[str]" = queue.Queue()
         self._btn_a = None
         self._btn_b = None
+        self._btn_x = None
+        self._btn_y = None
+        self._last_y_at = 0.0
         if os.getenv("RPLAYER_DISABLE_GPIO") == "1":
             return
-        self._init_gpio(a_pin, b_pin)
+        self._init_gpio(a_pin, b_pin, x_pin, y_pin)
 
-    def _init_gpio(self, a_pin: int, b_pin: int) -> None:
+    def _init_gpio(self, a_pin: int, b_pin: int, x_pin: int, y_pin: int) -> None:
         try:
             from gpiozero import Button  # type: ignore
         except Exception:
@@ -213,13 +221,34 @@ class ButtonInput:
             if DEBUG:
                 print("Button B pressed")
 
+        def on_x() -> None:
+            self._queue.put("mode")
+            if DEBUG:
+                print("Button X pressed")
+
+        def on_y() -> None:
+            now = time.time()
+            if now - self._last_y_at <= DEFAULT_DOUBLE_CLICK_SEC:
+                if DEBUG:
+                    print("Button Y double-click")
+                self._queue.put("shutdown")
+                self._last_y_at = 0.0
+                return
+            if DEBUG:
+                print("Button Y pressed")
+            self._last_y_at = now
+
         try:
             self._btn_a = Button(a_pin, pull_up=True)
             self._btn_b = Button(b_pin, pull_up=True)
+            self._btn_x = Button(x_pin, pull_up=True)
+            self._btn_y = Button(y_pin, pull_up=True)
             self._btn_a.when_pressed = on_a
             self._btn_b.when_pressed = on_b
+            self._btn_x.when_pressed = on_x
+            self._btn_y.when_pressed = on_y
             if DEBUG:
-                print(f"GPIO init: A=BCM{a_pin} B=BCM{b_pin}")
+                print(f"GPIO init: A=BCM{a_pin} B=BCM{b_pin} X=BCM{x_pin} Y=BCM{y_pin}")
         except Exception:
             # Ignore GPIO failures and fall back to no-op input.
             if DEBUG:
@@ -831,6 +860,54 @@ class RadikoResolver:
             return None
 
 
+class WorldRadioResolver:
+    def __init__(self) -> None:
+        self._base = "https://all.api.radio-browser.info/json"
+        self._cache: List[Station] = []
+        self._last_fetch = 0.0
+
+    def random_station(self) -> Optional[Station]:
+        stations = self._get_stations()
+        if not stations:
+            return None
+        return random.choice(stations)
+
+    def _get_stations(self) -> List[Station]:
+        if self._cache and (time.time() - self._last_fetch) < DEFAULT_PROGRAM_REFRESH_SEC:
+            return self._cache
+        try:
+            import requests  # type: ignore
+        except Exception:
+            return self._cache
+        url = f"{self._base}/stations/search"
+        params = {
+            "limit": "200",
+            "hidebroken": "true",
+        }
+        try:
+            res = requests.get(url, params=params, timeout=10)
+            if res.status_code != 200:
+                if DEBUG:
+                    print(f"WorldRadio: status {res.status_code} ({url})")
+                return self._cache
+            data = res.json()
+            stations: List[Station] = []
+            for item in data:
+                name = str(item.get("name") or "").strip()
+                stream = str(item.get("url_resolved") or item.get("url") or "").strip()
+                if not name or not stream:
+                    continue
+                stations.append(Station(id=name, name=name, stream_url=stream))
+            if stations:
+                self._cache = stations
+                self._last_fetch = time.time()
+            return self._cache
+        except Exception as exc:
+            if DEBUG:
+                print(f"WorldRadio: fetch failed: {exc!r}")
+            return self._cache
+
+
 class Player:
     def __init__(
         self,
@@ -845,19 +922,25 @@ class Player:
         self._display = display
         self._buttons = buttons
         self._resolver = resolver if resolver and resolver.available() else None
+        self._world = WorldRadioResolver()
         self._index = 0
+        self._mode = "radiko"
         self._last_meta = ""
         self._last_meta_at = 0.0
         self._program_title = ""
         self._program_image = None
         self._program_image_url = ""
         self._last_program_at = 0.0
+        self._world_station: Optional[Station] = None
+        self._shutdown_confirm_at: Optional[float] = None
+        self._state_path = os.getenv("RPLAYER_STATE", "state.json")
         self._stream_cache: Dict[str, str] = {}
         self._title_cache: Dict[str, Tuple[str, float]] = {}
         self._ffmpeg: Optional[subprocess.Popen] = None
         self._radiko_token: Optional[str] = None
         self._hydrate_station_names()
         self._load_radiko_token()
+        self._load_state()
 
     def _hydrate_station_names(self) -> None:
         if not self._resolver:
@@ -870,9 +953,18 @@ class Player:
                 station.name = name
 
     def current_station(self) -> Station:
+        if self._mode == "world" and self._world_station:
+            return self._world_station
         return self._stations[self._index]
 
     def next_station(self) -> None:
+        if self._mode == "world":
+            self._world_station = self._world.random_station()
+            if DEBUG and self._world_station:
+                print(f"WorldRadio: next -> {self._world_station.name}")
+            self._start_current()
+            self._save_state()
+            return
         if len(self._stations) < 2:
             self._display.show(self.current_station().name or self.current_station().id, "Only one station")
             return
@@ -881,8 +973,16 @@ class Player:
             current = self.current_station()
             print(f"Station next -> {self._index}: {current.id} {current.name}")
         self._start_current()
+        self._save_state()
 
     def prev_station(self) -> None:
+        if self._mode == "world":
+            self._world_station = self._world.random_station()
+            if DEBUG and self._world_station:
+                print(f"WorldRadio: prev -> {self._world_station.name}")
+            self._start_current()
+            self._save_state()
+            return
         if len(self._stations) < 2:
             self._display.show(self.current_station().name or self.current_station().id, "Only one station")
             return
@@ -891,6 +991,7 @@ class Player:
             current = self.current_station()
             print(f"Station prev -> {self._index}: {current.id} {current.name}")
         self._start_current()
+        self._save_state()
 
     def _start_current(self) -> None:
         station = self.current_station()
@@ -920,6 +1021,7 @@ class Player:
         is_radiko_stream = bool(
             self._resolver
             and ("radiko" in stream_url or "smartstream" in stream_url)
+            and self._mode == "radiko"
         )
         if stream_url.endswith(".m3u8") and not self._radiko_token:
             self._display.show(label, "radiko token missing")
@@ -936,13 +1038,32 @@ class Player:
 
     def tick(self) -> None:
         action = self._buttons.poll()
+        if self._shutdown_confirm_at is not None:
+            if action == "mode":
+                self._shutdown_now()
+                return
+            if action in ("prev", "next", "shutdown"):
+                self._shutdown_confirm_at = None
+                action = None
+            elif time.time() - self._shutdown_confirm_at >= DEFAULT_SHUTDOWN_CONFIRM_SEC:
+                self._shutdown_confirm_at = None
+            if self._shutdown_confirm_at is not None:
+                self._display.show("Shutdown?", "Press X to confirm")
+                return
+
         if action == "prev":
             self.prev_station()
         elif action == "next":
             self.next_station()
+        elif action == "mode":
+            self._toggle_mode()
+        elif action == "shutdown":
+            self._shutdown_confirm_at = time.time()
+            self._display.show("Shutdown?", "Press X to confirm")
+            return
 
         now = time.time()
-        if now - self._last_program_at >= DEFAULT_PROGRAM_REFRESH_SEC:
+        if self._mode == "radiko" and now - self._last_program_at >= DEFAULT_PROGRAM_REFRESH_SEC:
             self._update_program_info()
             self._last_program_at = now
         if now - self._last_meta_at >= DEFAULT_METADATA_SEC:
@@ -951,12 +1072,17 @@ class Player:
 
         current = self.current_station()
         line1 = current.name or current.id or "Station"
-        line2 = self._program_title or self._last_meta or "Now Playing"
-        self._display.show(line1, line2, self._program_image)
+        if self._mode == "radiko":
+            line2 = self._program_title or self._last_meta or "Now Playing"
+            image = self._program_image
+        else:
+            line2 = self._last_meta or "World Radio"
+            image = None
+        self._display.show(line1, line2, image)
 
     def _get_title(self) -> str:
         station = self.current_station()
-        if self._resolver:
+        if self._mode == "radiko" and self._resolver:
             cached = self._title_cache.get(station.id)
             if cached and time.time() - cached[1] < DEFAULT_METADATA_SEC:
                 return cached[0]
@@ -999,6 +1125,65 @@ class Player:
         self._radiko_token = self._resolver.auth_token()
         if DEBUG and self._radiko_token:
             print("Radiko: auth token loaded")
+
+    def _toggle_mode(self) -> None:
+        if self._mode == "radiko":
+            self._mode = "world"
+            if not self._world_station:
+                self._world_station = self._world.random_station()
+        else:
+            self._mode = "radiko"
+        if DEBUG:
+            print(f"Mode -> {self._mode}")
+        self._start_current()
+        self._save_state()
+
+    def _shutdown_now(self) -> None:
+        if DEBUG:
+            print("Shutdown: poweroff")
+        try:
+            subprocess.Popen(["sudo", "shutdown", "-h", "now"])
+        except Exception:
+            pass
+
+    def _load_state(self) -> None:
+        try:
+            with open(self._state_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return
+        mode = str(data.get("mode") or "").strip()
+        if mode in ("radiko", "world"):
+            self._mode = mode
+        if self._mode == "radiko":
+            station_id = str(data.get("station_id") or "").strip()
+            if station_id:
+                for idx, st in enumerate(self._stations):
+                    if st.id == station_id:
+                        self._index = idx
+                        break
+        else:
+            name = str(data.get("world_name") or "").strip()
+            url = str(data.get("world_url") or "").strip()
+            if name and url:
+                self._world_station = Station(id=name, name=name, stream_url=url)
+            if not self._world_station:
+                self._world_station = self._world.random_station()
+        self._start_current()
+
+    def _save_state(self) -> None:
+        try:
+            data = {"mode": self._mode}
+            if self._mode == "radiko":
+                data["station_id"] = self.current_station().id
+            else:
+                if self._world_station:
+                    data["world_name"] = self._world_station.name
+                    data["world_url"] = self._world_station.stream_url
+            with open(self._state_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            return
 
     def _start_ffmpeg(self, url: str, token: str) -> None:
         headers_map: Dict[str, str] = {}
@@ -1154,6 +1339,8 @@ def main() -> int:
     buttons = ButtonInput(
         int(os.getenv("RPLAYER_BUTTON_A", DEFAULT_BUTTON_A_PIN)),
         int(os.getenv("RPLAYER_BUTTON_B", DEFAULT_BUTTON_B_PIN)),
+        int(os.getenv("RPLAYER_BUTTON_X", DEFAULT_BUTTON_X_PIN)),
+        int(os.getenv("RPLAYER_BUTTON_Y", DEFAULT_BUTTON_Y_PIN)),
     )
     resolver = RadikoResolver()
     if not mpd_is_available() and not resolver.auth_token():
@@ -1161,7 +1348,6 @@ def main() -> int:
         print("mpd is not running. Start it with: sudo systemctl enable --now mpd")
         return 1
     player = Player(stations, display, buttons, resolver)
-    player._start_current()
 
     running = True
 
