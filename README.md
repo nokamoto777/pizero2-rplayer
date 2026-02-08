@@ -183,6 +183,7 @@ RPLAYER_PROGRAM_REFRESH_SEC=3600 python3 rplayer.py
 World radio uses `all.api.radio-browser.info` and picks a random station.
 A/B navigates random stations with history (A goes back to the previously played station).
 Station image (favicon) is shown under the text when available.
+World radio is played with `ffmpeg` directly (no mpd needed).
 
 ### Last station resume
 The app saves the last station/mode in `state.json` (override with `RPLAYER_STATE`).

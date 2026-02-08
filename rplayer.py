@@ -10,6 +10,7 @@ import subprocess
 import time
 import re
 import random
+import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl, urljoin
@@ -938,6 +939,8 @@ class Player:
         self._world_index = -1
         self._world_image = None
         self._world_image_url = ""
+        self._program_fetching = False
+        self._program_lock = threading.Lock()
         self._shutdown_confirm_at: Optional[float] = None
         self._state_path = os.getenv("RPLAYER_STATE", "state.json")
         self._stream_cache: Dict[str, str] = {}
@@ -1028,7 +1031,9 @@ class Player:
             if DEBUG:
                 print("Radiko: auth token missing, cannot play HLS")
             return
-        if self._radiko_token and (stream_url.endswith(".m3u8") or is_radiko_stream):
+        if self._mode == "world":
+            self._start_ffmpeg_plain(stream_url)
+        elif self._radiko_token and (stream_url.endswith(".m3u8") or is_radiko_stream):
             self._start_ffmpeg(stream_url, self._radiko_token)
         else:
             play_stream(stream_url)
@@ -1066,7 +1071,7 @@ class Player:
 
         now = time.time()
         if self._mode == "radiko" and now - self._last_program_at >= DEFAULT_PROGRAM_REFRESH_SEC:
-            self._update_program_info()
+            self._kick_program_update()
             self._last_program_at = now
         if now - self._last_meta_at >= DEFAULT_METADATA_SEC:
             self._last_meta = self._get_title()
@@ -1094,32 +1099,45 @@ class Player:
                 return title
         return get_mpd_title()
 
-    def _update_program_info(self) -> None:
+    def _kick_program_update(self) -> None:
         if not self._resolver:
             return
-        program = self._resolver.current_program(self.current_station().id)
-        if not program:
-            return
-        if program.title:
-            self._program_title = program.title
-        if not program.img_url or program.img_url == self._program_image_url:
-            return
-        self._program_image_url = program.img_url
-        try:
-            import requests  # type: ignore
-            from PIL import Image  # type: ignore
-
-            res = requests.get(program.img_url, timeout=5)
-            if res.status_code != 200:
-                if DEBUG:
-                    print(f"Radiko: program image status {res.status_code}")
+        with self._program_lock:
+            if self._program_fetching:
                 return
-            self._program_image = Image.open(
-                io.BytesIO(res.content)
-            ).convert("RGB")
-        except Exception as exc:
-            if DEBUG:
-                print(f"Radiko: program image fetch failed: {exc!r}")
+            self._program_fetching = True
+        station_id = self.current_station().id
+
+        def worker() -> None:
+            try:
+                program = self._resolver.current_program(station_id)
+                if not program or self._mode != "radiko":
+                    return
+                if program.title:
+                    self._program_title = program.title
+                if not program.img_url or program.img_url == self._program_image_url:
+                    return
+                self._program_image_url = program.img_url
+                try:
+                    import requests  # type: ignore
+                    from PIL import Image  # type: ignore
+
+                    res = requests.get(program.img_url, timeout=5)
+                    if res.status_code != 200:
+                        if DEBUG:
+                            print(f"Radiko: program image status {res.status_code}")
+                        return
+                    if self.current_station().id != station_id:
+                        return
+                    self._program_image = Image.open(io.BytesIO(res.content)).convert("RGB")
+                except Exception as exc:
+                    if DEBUG:
+                        print(f"Radiko: program image fetch failed: {exc!r}")
+            finally:
+                with self._program_lock:
+                    self._program_fetching = False
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _load_radiko_token(self) -> None:
         if not self._resolver or not self._resolver.available():
@@ -1254,6 +1272,25 @@ class Player:
             "warning" if not DEBUG else "info",
             "-headers",
             headers,
+            "-i",
+            url,
+            "-f",
+            "alsa",
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+            DEFAULT_ALSA_DEVICE,
+        ]
+        if DEBUG:
+            print("ffmpeg:", " ".join(cmd))
+        self._ffmpeg = subprocess.Popen(cmd)
+
+    def _start_ffmpeg_plain(self, url: str) -> None:
+        cmd = [
+            DEFAULT_FFMPEG,
+            "-loglevel",
+            "warning" if not DEBUG else "info",
             "-i",
             url,
             "-f",
