@@ -18,20 +18,25 @@ Radiko player for Raspberry Pi Zero 2 + PIMORONI Line Out (64-bit Raspberry Pi O
 
 ## High-level design
 Components:
-- **Audio playback**: `mpd` plays the radiko stream URL.
-- **Station control**: Python app manages station list, starts/stops mpd playback.
+- **Audio playback**:
+  - Radiko: `ffmpeg` plays HLS with auth headers.
+  - World radio: `ffmpeg` plays the stream directly.
+  - Manual `stream_url`: `mpd/mpc` can be used.
+- **Station control**: Python app manages station list and playback.
 - **Metadata**: Python app polls radiko program info and updates the display.
-- **Program image**: Python app fetches the current program image and draws it under the text.
+- **Program image**:
+  - Radiko: program image from schedule.
+  - World radio: station favicon when available.
 - **UI**: A/B buttons -> previous/next station.
 - **Mode switch**: X toggles Radiko / World Radio.
 - **Shutdown**: Y double-click -> confirm, then X to shutdown.
-- **Display**: Show station name + current track or program title.
+- **Display**: Show station name + current track or program title, plus images.
 
 Data flow:
-1) User presses A/B -> Python selects station.
-2) Python resolves radiko stream URL.
-3) Python updates mpd playlist and starts playback.
-4) Python polls radiko now-playing metadata.
+1) User presses A/B -> Python selects station (or random in world mode).
+2) Python resolves stream URL if needed.
+3) Python starts playback (ffmpeg or mpd).
+4) Python polls metadata + program image.
 5) Python updates Line Out display.
 
 Process:
@@ -120,7 +125,7 @@ python3 rplayer.py
 4) Radiko HLS requires `X-Radiko-AuthToken` headers. The app uses `ffmpeg` to play
    HLS directly with headers because `mpd` cannot add custom headers.
 
-### ALSA output for radiko (ffmpeg)
+### ALSA output for radiko/world radio (ffmpeg)
 `ffmpeg` outputs directly to ALSA. Set the device if needed:
 ```bash
 RPLAYER_ALSA_DEVICE=hw:1,0 python3 rplayer.py
@@ -174,7 +179,8 @@ RPLAYER_DEBUG=1 python3 rplayer.py
 ```
 
 ### Loading indicator
-During station switching, a spinner is shown until playback/metadata starts.
+During station switching, a centered spinner is shown and the background is dimmed
+until playback/metadata starts.
 
 ### Program image refresh
 Program schedules are refreshed hourly by default. Override:
@@ -265,16 +271,19 @@ If `stream_url` is empty, the app will try to resolve it via `radiko.py`.
 
 ### rplayer.py (core responsibilities)
 - Load stations list
-- Track current station index
+- Track current station/mode (radiko/world) + history
 - Button handlers:
   - A: previous station
   - B: next station
-- Resolve radiko stream URL for selected station
-- Control mpd (`mpc clear`, `mpc add`, `mpc play`)
-- Poll now-playing metadata from radiko (fallback to mpd stream title)
+  - X: mode toggle
+  - Y: double-click shutdown confirm
+- Resolve radiko stream URL and program schedule
+- Play streams via ffmpeg (radiko/world) or mpd (manual URL)
+- Poll metadata + program images
 - Update Line Out display with:
   - Station name
   - Song/Program title (truncate/scroll if needed)
+  - Program/station image
 
 ### Display behavior
 - Top line: Station name
@@ -282,7 +291,7 @@ If `stream_url` is empty, the app will try to resolve it via `radiko.py`.
 - If metadata is unavailable: show station name + "Now Playing"
 - If display libraries are not available, the app logs to console as a fallback.
 
-## systemd service (proposed)
+## systemd service
 `services/rplayer.service`:
 ```
 [Unit]
@@ -312,13 +321,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable rplayer.service
 sudo systemctl start rplayer.service
 ```
-
-## Next steps (implementation plan)
-1) Implement station list + selection logic.
-2) Implement radiko auth and stream URL resolve.
-3) Wire mpd control.
-4) Implement Line Out display and button handling.
-5) Add metadata polling + text scroll.
 
 ## Notes
 - radiko authentication/stream URL logic should be cached and renewed periodically.
