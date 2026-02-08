@@ -934,6 +934,7 @@ class Player:
         self._program_image = None
         self._program_image_url = ""
         self._last_program_at = 0.0
+        self._last_program_check_at = 0.0
         self._world_station: Optional[Station] = None
         self._world_history: List[Station] = []
         self._world_index = -1
@@ -1070,9 +1071,13 @@ class Player:
             return
 
         now = time.time()
-        if self._mode == "radiko" and now - self._last_program_at >= DEFAULT_PROGRAM_REFRESH_SEC:
-            self._kick_program_update()
-            self._last_program_at = now
+        if self._mode == "radiko":
+            # Refresh schedule occasionally, but check current program often.
+            if now - self._last_program_at >= DEFAULT_PROGRAM_REFRESH_SEC:
+                self._last_program_at = now
+            if now - self._last_program_check_at >= DEFAULT_METADATA_SEC:
+                self._kick_program_update()
+                self._last_program_check_at = now
         if now - self._last_meta_at >= DEFAULT_METADATA_SEC:
             self._last_meta = self._get_title()
             self._last_meta_at = now
