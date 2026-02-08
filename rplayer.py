@@ -164,7 +164,14 @@ class LineOutDisplay:
                 continue
         return image_font.load_default()
 
-    def show(self, line1: str, line2: str, image=None, loading: bool = False) -> None:
+    def show(
+        self,
+        line1: str,
+        line2: str,
+        image=None,
+        loading: bool = False,
+        force: bool = False,
+    ) -> None:
         if not self._display:
             self._fallback.show(line1, line2)
             return
@@ -1034,6 +1041,7 @@ class Player:
         self._loading = True
         self._loading_since = time.time()
         stream_url = station.stream_url
+        self._display.show(label, "Loading...", loading=True, force=True)
         if not stream_url and self._resolver:
             cached = self._stream_cache.get(station.id)
             if cached and "medialist" not in cached:
@@ -1125,7 +1133,7 @@ class Player:
             or (time.time() - self._loading_since) > 8.0
         ):
             self._loading = False
-        self._display.show(line1, line2, image, loading=self._loading)
+        self._display.show(line1, line2, image, loading=self._loading, force=True)
 
     def _get_title(self) -> str:
         station = self.current_station()
