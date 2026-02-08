@@ -178,37 +178,41 @@ class LineOutDisplay:
 
         try:
             assert self._draw and self._image and self._font
-            self._draw.rectangle((0, 0, self._width, self._height), fill=(0, 0, 0))
-            line1 = _fit_text(self._draw, self._font, line1, self._width - 4)
-            line2 = _fit_text(self._draw, self._font, line2, self._width - 4)
-            self._draw.text((2, 2), line1, font=self._font, fill=(255, 255, 255))
-            line2_y = 2 + self._font_size + 2
-            self._draw.text((2, line2_y), line2, font=self._font, fill=(255, 255, 255))
-            if image is not None:
-                img_top = line2_y + self._font_size + 4
-                if img_top < self._height - 2:
-                    target_w = self._width - 4
-                    target_h = self._height - img_top - 2
-                    try:
-                        resized = _fit_image(image, target_w, target_h)
-                        x = (self._width - resized.width) // 2
-                        y = img_top + (target_h - resized.height) // 2
-                        self._image.paste(resized, (x, y))
-                    except Exception:
-                        pass
+            if force:
+                self._draw.rectangle((0, 0, self._width, self._height), fill=(0, 0, 0))
+                line1 = _fit_text(self._draw, self._font, line1, self._width - 4)
+                line2 = _fit_text(self._draw, self._font, line2, self._width - 4)
+                self._draw.text((2, 2), line1, font=self._font, fill=(255, 255, 255))
+                line2_y = 2 + self._font_size + 2
+                self._draw.text((2, line2_y), line2, font=self._font, fill=(255, 255, 255))
+                if image is not None:
+                    img_top = line2_y + self._font_size + 4
+                    if img_top < self._height - 2:
+                        target_w = self._width - 4
+                        target_h = self._height - img_top - 2
+                        try:
+                            resized = _fit_image(image, target_w, target_h)
+                            x = (self._width - resized.width) // 2
+                            y = img_top + (target_h - resized.height) // 2
+                            self._image.paste(resized, (x, y))
+                        except Exception:
+                            pass
             if loading:
-                self._draw_loading_spinner()
+                self._draw_loading_spinner(center=True, size=64)
             self._display.display(self._image)
         except Exception:
             self._fallback.show(line1, line2)
 
-    def _draw_loading_spinner(self) -> None:
-        # Simple 12-step spinner in the bottom-right corner.
+    def _draw_loading_spinner(self, center: bool = False, size: int = 18) -> None:
+        # Simple 12-step spinner (centered, overlay).
         try:
             assert self._draw
-            size = 18
-            cx = self._width - size - 4
-            cy = self._height - size - 4
+            if center:
+                cx = (self._width - size) // 2
+                cy = (self._height - size) // 2
+            else:
+                cx = self._width - size - 4
+                cy = self._height - size - 4
             step = int((time.time() * 8) % 12)
             for i in range(12):
                 angle = (i * 30) * 3.14159 / 180.0
@@ -1041,7 +1045,7 @@ class Player:
         self._loading = True
         self._loading_since = time.time()
         stream_url = station.stream_url
-        self._display.show(label, "Loading...", loading=True, force=True)
+        self._display.show(label, "Loading...", loading=True, force=False)
         if not stream_url and self._resolver:
             cached = self._stream_cache.get(station.id)
             if cached and "medialist" not in cached:
@@ -1133,7 +1137,7 @@ class Player:
             or (time.time() - self._loading_since) > 8.0
         ):
             self._loading = False
-        self._display.show(line1, line2, image, loading=self._loading, force=True)
+        self._display.show(line1, line2, image, loading=self._loading, force=not self._loading)
 
     def _get_title(self) -> str:
         station = self.current_station()
