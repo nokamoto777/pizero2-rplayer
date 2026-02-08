@@ -198,6 +198,7 @@ class LineOutDisplay:
                         except Exception:
                             pass
             if loading:
+                self._dim_background()
                 self._draw_loading_spinner(center=True, size=64)
             self._display.display(self._image)
         except Exception:
@@ -225,6 +226,16 @@ class LineOutDisplay:
                 alpha = 255 if i == step else 120
                 color = (alpha, alpha, alpha)
                 self._draw.line((x1, y1, x2, y2), fill=color, width=2)
+        except Exception:
+            return
+
+    def _dim_background(self) -> None:
+        try:
+            assert self._draw
+            from PIL import Image  # type: ignore
+
+            overlay = Image.new("RGBA", (self._width, self._height), (0, 0, 0, 110))
+            self._image.paste(overlay, (0, 0), overlay)
         except Exception:
             return
 
