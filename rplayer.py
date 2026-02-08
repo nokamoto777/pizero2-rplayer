@@ -11,6 +11,7 @@ import time
 import re
 import random
 import threading
+import math
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl, urljoin
@@ -163,7 +164,7 @@ class LineOutDisplay:
                 continue
         return image_font.load_default()
 
-    def show(self, line1: str, line2: str, image=None) -> None:
+    def show(self, line1: str, line2: str, image=None, loading: bool = False) -> None:
         if not self._display:
             self._fallback.show(line1, line2)
             return
@@ -188,9 +189,33 @@ class LineOutDisplay:
                         self._image.paste(resized, (x, y))
                     except Exception:
                         pass
+            if loading:
+                self._draw_loading_spinner()
             self._display.display(self._image)
         except Exception:
             self._fallback.show(line1, line2)
+
+    def _draw_loading_spinner(self) -> None:
+        # Simple 12-step spinner in the bottom-right corner.
+        try:
+            assert self._draw
+            size = 18
+            cx = self._width - size - 4
+            cy = self._height - size - 4
+            step = int((time.time() * 8) % 12)
+            for i in range(12):
+                angle = (i * 30) * 3.14159 / 180.0
+                r1 = size * 0.15
+                r2 = size * 0.45
+                x1 = cx + size / 2 + r1 * math.cos(angle)
+                y1 = cy + size / 2 + r1 * math.sin(angle)
+                x2 = cx + size / 2 + r2 * math.cos(angle)
+                y2 = cy + size / 2 + r2 * math.sin(angle)
+                alpha = 255 if i == step else 120
+                color = (alpha, alpha, alpha)
+                self._draw.line((x1, y1, x2, y2), fill=color, width=2)
+        except Exception:
+            return
 
 
 class ButtonInput:
@@ -942,6 +967,8 @@ class Player:
         self._world_image_url = ""
         self._program_fetching = False
         self._program_lock = threading.Lock()
+        self._loading = False
+        self._loading_since = 0.0
         self._shutdown_confirm_at: Optional[float] = None
         self._state_path = os.getenv("RPLAYER_STATE", "state.json")
         self._stream_cache: Dict[str, str] = {}
@@ -1004,6 +1031,8 @@ class Player:
         self._last_program_at = 0.0
         self._world_image = None
         self._world_image_url = ""
+        self._loading = True
+        self._loading_since = time.time()
         stream_url = station.stream_url
         if not stream_url and self._resolver:
             cached = self._stream_cache.get(station.id)
@@ -1038,7 +1067,7 @@ class Player:
             self._start_ffmpeg(stream_url, self._radiko_token)
         else:
             play_stream(stream_url)
-        self._display.show(label, "Loading...")
+        self._display.show(label, "Loading...", loading=True)
         self._last_meta = ""
         self._last_meta_at = 0.0
         if self._mode == "world":
@@ -1090,7 +1119,13 @@ class Player:
         else:
             line2 = self._last_meta or "World Radio"
             image = self._world_image
-        self._display.show(line1, line2, image)
+        if self._loading and (
+            self._last_meta
+            or self._program_title
+            or (time.time() - self._loading_since) > 8.0
+        ):
+            self._loading = False
+        self._display.show(line1, line2, image, loading=self._loading)
 
     def _get_title(self) -> str:
         station = self.current_station()

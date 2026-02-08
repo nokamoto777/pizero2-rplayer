@@ -173,6 +173,9 @@ Enable debug logs to the console:
 RPLAYER_DEBUG=1 python3 rplayer.py
 ```
 
+### Loading indicator
+During station switching, a spinner is shown until playback/metadata starts.
+
 ### Program image refresh
 Program schedules are refreshed hourly by default. Override:
 ```bash
