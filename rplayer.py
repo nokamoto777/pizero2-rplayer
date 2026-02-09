@@ -204,6 +204,15 @@ class LineOutDisplay:
         except Exception:
             self._fallback.show(line1, line2)
 
+    def dim(self) -> None:
+        if not self._display:
+            return
+        try:
+            self._dim_background()
+            self._display.display(self._image)
+        except Exception:
+            return
+
     def _draw_loading_spinner(self, center: bool = False, size: int = 18) -> None:
         # Simple 12-step spinner (centered, overlay).
         try:
@@ -286,6 +295,7 @@ class ButtonInput:
             if DEBUG:
                 print("Button Y pressed")
             self._last_y_at = now
+            self._queue.put("pause")
 
         try:
             self._btn_a = Button(a_pin, pull_up=True)
@@ -997,6 +1007,7 @@ class Player:
         self._title_cache: Dict[str, Tuple[str, float]] = {}
         self._ffmpeg: Optional[subprocess.Popen] = None
         self._radiko_token: Optional[str] = None
+        self._paused = False
         self._hydrate_station_names()
         self._load_radiko_token()
         self._load_state()
@@ -1111,6 +1122,10 @@ class Player:
                 self._display.show("Shutdown?", "Press X to confirm")
                 return
 
+        if action == "pause":
+            self._toggle_pause()
+            return
+
         if action == "prev":
             self.prev_station()
         elif action == "next":
@@ -1148,6 +1163,10 @@ class Player:
             or (time.time() - self._loading_since) > 8.0
         ):
             self._loading = False
+        if self._paused:
+            self._display.show("Playback OFF", "Press Y to resume", loading=False, force=True)
+            self._display.dim()
+            return
         self._display.show(line1, line2, image, loading=self._loading, force=not self._loading)
 
     def _get_title(self) -> str:
@@ -1220,6 +1239,16 @@ class Player:
             print(f"Mode -> {self._mode}")
         self._start_current()
         self._save_state()
+
+    def _toggle_pause(self) -> None:
+        if self._paused:
+            self._paused = False
+            self._start_current()
+        else:
+            self._paused = True
+            self._stop_ffmpeg()
+            if DEBUG:
+                print("Playback paused")
 
     def _shutdown_now(self) -> None:
         if DEBUG:

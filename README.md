@@ -8,6 +8,7 @@ Radiko player for Raspberry Pi Zero 2 + PIMORONI Line Out (64-bit Raspberry Pi O
 - Display shows current program image under the text (updates on program/station change)
 - A/B buttons change station
 - X button toggles Radiko / World Radio mode
+- Y single-click toggles playback on/off
 - Y double-click opens shutdown confirm (press X to shutdown)
 - Fresh OS install (no prior setup)
 
@@ -30,6 +31,7 @@ Components:
 - **UI**: A/B buttons -> previous/next station.
 - **Mode switch**: X toggles Radiko / World Radio.
 - **Shutdown**: Y double-click -> confirm, then X to shutdown.
+- **Playback toggle**: Y single-click -> ON/OFF (screen dim when OFF).
 - **Display**: Show station name + current track or program title, plus images.
 
 Data flow:
