@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
+User=noriyuki
 WorkingDirectory=/opt/pizero2-rplayer
 Environment=RPLAYER_ALSA_DEVICE=hw:1,0
 Environment=RPLAYER_FONT=/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc
