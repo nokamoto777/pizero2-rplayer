@@ -1008,6 +1008,7 @@ class Player:
         self._ffmpeg: Optional[subprocess.Popen] = None
         self._radiko_token: Optional[str] = None
         self._paused = False
+        self._paused_drawn = False
         self._hydrate_station_names()
         self._load_radiko_token()
         self._load_state()
@@ -1128,10 +1129,13 @@ class Player:
 
         if action == "prev":
             self.prev_station()
+            self._paused_drawn = False
         elif action == "next":
             self.next_station()
+            self._paused_drawn = False
         elif action == "mode":
             self._toggle_mode()
+            self._paused_drawn = False
         elif action == "shutdown":
             self._shutdown_confirm_at = time.time()
             self._display.show("Shutdown?", "Press X to confirm")
@@ -1164,8 +1168,10 @@ class Player:
         ):
             self._loading = False
         if self._paused:
-            self._display.show("Playback OFF", "Press Y to resume", loading=False, force=True)
-            self._display.dim()
+            if not self._paused_drawn:
+                self._display.show("Playback OFF", "Press Y to resume", loading=False, force=True)
+                self._display.dim()
+                self._paused_drawn = True
             return
         self._display.show(line1, line2, image, loading=self._loading, force=not self._loading)
 
@@ -1243,9 +1249,11 @@ class Player:
     def _toggle_pause(self) -> None:
         if self._paused:
             self._paused = False
+            self._paused_drawn = False
             self._start_current()
         else:
             self._paused = True
+            self._paused_drawn = False
             self._stop_ffmpeg()
             if DEBUG:
                 print("Playback paused")
