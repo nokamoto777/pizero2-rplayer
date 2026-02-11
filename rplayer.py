@@ -52,6 +52,7 @@ DEFAULT_RADIKO_AUTH2_URLS = os.getenv(
     "RPLAYER_RADIKO_AUTH2_URLS",
     "https://radiko.jp/v2/api/auth2,https://radiko.jp/v2/api/auth2_fms,http://radiko.jp/v2/api/auth2,http://radiko.jp/v2/api/auth2_fms",
 )
+RADIKO_LOGO_FALLBACK = os.getenv("RPLAYER_RADIKO_LOGO_FALLBACK", "0") == "1"
 
 
 @dataclass
@@ -1171,7 +1172,7 @@ class Player:
         self._last_meta_at = 0.0
         if self._mode == "world":
             self._update_world_image()
-        elif self._mode == "radiko":
+        elif self._mode == "radiko" and RADIKO_LOGO_FALLBACK:
             self._kick_station_logo_update()
 
     def tick(self) -> None:
@@ -1223,7 +1224,9 @@ class Player:
         line1 = current.name or current.id or "Station"
         if self._mode == "radiko":
             line2 = self._program_title or self._last_meta or "Now Playing"
-            image = self._program_image or self._station_image
+            image = self._program_image
+            if image is None and RADIKO_LOGO_FALLBACK:
+                image = self._station_image
         else:
             line2 = self._last_meta or "World Radio"
             image = self._world_image
@@ -1241,7 +1244,9 @@ class Player:
             return
         image_key = ""
         if self._mode == "radiko":
-            image_key = self._program_image_url or self._station_image_url or ""
+            image_key = self._program_image_url or ""
+            if not image_key and RADIKO_LOGO_FALLBACK:
+                image_key = self._station_image_url or ""
         elif self._mode == "world":
             image_key = self._world_image_url or ""
         state = (line1, line2, image_key, self._mode == "world")
@@ -1287,6 +1292,13 @@ class Player:
                     return
                 if program and program.title:
                     self._program_title = program.title
+                if DEBUG and program:
+                    print(
+                        "Radiko: program",
+                        station_id,
+                        "title=" + (program.title or ""),
+                        "img=" + (program.img_url or ""),
+                    )
                 if program and program.img_url and program.img_url != self._program_image_url:
                     self._program_image_url = program.img_url
                     try:
@@ -1302,7 +1314,7 @@ class Player:
                     except Exception as exc:
                         if DEBUG:
                             print(f"Radiko: program image fetch failed: {exc!r}")
-                if self._program_image is None and self._resolver:
+                if RADIKO_LOGO_FALLBACK and self._program_image is None and self._resolver:
                     logo_url = self._resolver.station_logo_url(station_id)
                     if logo_url and logo_url != self._station_image_url:
                         self._station_image_url = logo_url
