@@ -1072,6 +1072,7 @@ class Player:
         self._paused = False
         self._paused_drawn = False
         self._last_render_state: Optional[Tuple[str, str, str, bool]] = None
+        self._image_rev = 0
         self._hydrate_station_names()
         self._load_radiko_token()
         self._load_state()
@@ -1125,6 +1126,7 @@ class Player:
         self._program_title = ""
         self._program_image = None
         self._program_image_url = ""
+        self._image_rev = 0
         self._station_image = None
         self._station_image_url = ""
         self._last_program_at = 0.0
@@ -1249,7 +1251,7 @@ class Player:
                 image_key = self._station_image_url or ""
         elif self._mode == "world":
             image_key = self._world_image_url or ""
-        state = (line1, line2, image_key, self._mode == "world")
+        state = (line1, line2, image_key, self._mode == "world", str(self._image_rev))
         changed = state != self._last_render_state
         if not self._loading and not changed:
             return
@@ -1311,6 +1313,7 @@ class Player:
                                 print(f"Radiko: program image status {res.status_code}")
                         elif self.current_station().id == station_id:
                             self._program_image = Image.open(io.BytesIO(res.content)).convert("RGB")
+                            self._image_rev += 1
                     except Exception as exc:
                         if DEBUG:
                             print(f"Radiko: program image fetch failed: {exc!r}")
