@@ -180,6 +180,20 @@ Enable debug logs to the console:
 RPLAYER_DEBUG=1 python3 rplayer.py
 ```
 
+### Display refresh rate (FPS)
+Default refresh is 1.0s (≈1 FPS). You can raise it, but CPU/SPI load will increase:
+```bash
+RPLAYER_REFRESH_SEC=0.033 python3 rplayer.py  # ~30 FPS
+```
+
+### Smarter redraw + spinner FPS
+The app now redraws only when content changes. You can still animate the loading
+spinner at a higher FPS:
+```bash
+RPLAYER_LOADING_REFRESH_SEC=0.05 python3 rplayer.py  # 20 FPS spinner
+RPLAYER_PAUSED_REFRESH_SEC=0.5 python3 rplayer.py    # slower when paused
+```
+
 ### Loading indicator
 During station switching, a centered spinner is shown and the background is dimmed
 until playback/metadata starts.

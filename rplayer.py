@@ -26,7 +26,9 @@ DEFAULT_BUTTON_A_PIN = 5
 DEFAULT_BUTTON_B_PIN = 6
 DEFAULT_BUTTON_X_PIN = 16
 DEFAULT_BUTTON_Y_PIN = 24
-DEFAULT_REFRESH_SEC = 1.0
+DEFAULT_REFRESH_SEC = float(os.getenv("RPLAYER_REFRESH_SEC", "1.0"))
+DEFAULT_LOADING_REFRESH_SEC = float(os.getenv("RPLAYER_LOADING_REFRESH_SEC", "0.05"))
+DEFAULT_PAUSED_REFRESH_SEC = float(os.getenv("RPLAYER_PAUSED_REFRESH_SEC", "0.5"))
 DEFAULT_METADATA_SEC = 10.0
 DEFAULT_PROGRAM_REFRESH_SEC = float(os.getenv("RPLAYER_PROGRAM_REFRESH_SEC", "3600"))
 DEFAULT_DOUBLE_CLICK_SEC = float(os.getenv("RPLAYER_DOUBLE_CLICK_SEC", "0.5"))
@@ -1019,6 +1021,7 @@ class Player:
         self._radiko_token: Optional[str] = None
         self._paused = False
         self._paused_drawn = False
+        self._last_render_state: Optional[Tuple[str, str, str, bool]] = None
         self._hydrate_station_names()
         self._load_radiko_token()
         self._load_state()
@@ -1183,7 +1186,25 @@ class Player:
                 self._display.dim()
                 self._paused_drawn = True
             return
-        self._display.show(line1, line2, image, loading=self._loading, force=not self._loading)
+        image_key = ""
+        if self._mode == "radiko":
+            image_key = self._program_image_url or ""
+        elif self._mode == "world":
+            image_key = self._world_image_url or ""
+        state = (line1, line2, image_key, self._mode == "world")
+        changed = state != self._last_render_state
+        if not self._loading and not changed:
+            return
+        self._display.show(line1, line2, image, loading=self._loading, force=changed)
+        if changed:
+            self._last_render_state = state
+
+    def refresh_sec(self) -> float:
+        if self._paused:
+            return DEFAULT_PAUSED_REFRESH_SEC
+        if self._loading:
+            return DEFAULT_LOADING_REFRESH_SEC
+        return DEFAULT_REFRESH_SEC
 
     def _get_title(self) -> str:
         station = self.current_station()
@@ -1569,7 +1590,7 @@ def main() -> int:
     try:
         while running:
             player.tick()
-            time.sleep(DEFAULT_REFRESH_SEC)
+            time.sleep(player.refresh_sec())
     finally:
         player._stop_ffmpeg()
         try:
