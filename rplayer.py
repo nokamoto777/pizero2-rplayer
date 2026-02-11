@@ -343,6 +343,7 @@ class RadikoResolver:
         self._auth_headers: Dict[str, str] = {}
         self._stream_url_cache: Dict[str, str] = {}
         self._program_cache: Dict[str, Tuple[float, str, List[ProgramInfo]]] = {}
+        self._station_logo_cache: Dict[str, str] = {}
         self._init_client()
 
     def _init_client(self) -> None:
@@ -461,6 +462,50 @@ class RadikoResolver:
             if DEBUG:
                 print(f"Radiko: program fetch failed: {exc!r}")
             return []
+
+    def station_logo_url(self, station_id: str) -> Optional[str]:
+        cached = self._station_logo_cache.get(station_id)
+        if cached:
+            return cached
+        logos = self._fetch_station_logos()
+        return logos.get(station_id)
+
+    def _fetch_station_logos(self) -> Dict[str, str]:
+        if self._station_logo_cache:
+            return self._station_logo_cache
+        try:
+            import requests  # type: ignore
+        except Exception:
+            return self._station_logo_cache
+        area = self._area_id or ""
+        urls = []
+        if area:
+            urls.append(f"https://radiko.jp/v3/station/list/{area}.xml")
+            urls.append(f"http://radiko.jp/v3/station/list/{area}.xml")
+        urls.append("https://radiko.jp/v3/station/region/full.xml")
+        urls.append("http://radiko.jp/v3/station/region/full.xml")
+        for url in urls:
+            try:
+                res = requests.get(url, timeout=5)
+                if res.status_code != 200:
+                    if DEBUG:
+                        print(f"Radiko: station list status {res.status_code} ({url})")
+                    continue
+                root = ET.fromstring(res.text)
+                for st in root.findall(".//station"):
+                    station_id = (st.findtext("id") or "").strip()
+                    if not station_id:
+                        continue
+                    logo = _pick_station_logo_url(st)
+                    if logo:
+                        self._station_logo_cache[station_id] = logo
+                if self._station_logo_cache:
+                    return self._station_logo_cache
+            except Exception as exc:
+                if DEBUG:
+                    print(f"Radiko: station list fetch failed: {exc!r}")
+                continue
+        return self._station_logo_cache
 
     @staticmethod
     def live_stream_url(station_id: str) -> str:
@@ -1002,6 +1047,8 @@ class Player:
         self._program_title = ""
         self._program_image = None
         self._program_image_url = ""
+        self._station_image = None
+        self._station_image_url = ""
         self._last_program_at = 0.0
         self._last_program_check_at = 0.0
         self._world_station: Optional[Station] = None
@@ -1075,6 +1122,8 @@ class Player:
         self._program_title = ""
         self._program_image = None
         self._program_image_url = ""
+        self._station_image = None
+        self._station_image_url = ""
         self._last_program_at = 0.0
         self._world_image = None
         self._world_image_url = ""
@@ -1170,7 +1219,7 @@ class Player:
         line1 = current.name or current.id or "Station"
         if self._mode == "radiko":
             line2 = self._program_title or self._last_meta or "Now Playing"
-            image = self._program_image
+            image = self._program_image or self._station_image
         else:
             line2 = self._last_meta or "World Radio"
             image = self._world_image
@@ -1230,28 +1279,44 @@ class Player:
         def worker() -> None:
             try:
                 program = self._resolver.current_program(station_id)
-                if not program or self._mode != "radiko":
+                if self._mode != "radiko":
                     return
-                if program.title:
+                if program and program.title:
                     self._program_title = program.title
-                if not program.img_url or program.img_url == self._program_image_url:
-                    return
-                self._program_image_url = program.img_url
-                try:
-                    import requests  # type: ignore
-                    from PIL import Image  # type: ignore
+                if program and program.img_url and program.img_url != self._program_image_url:
+                    self._program_image_url = program.img_url
+                    try:
+                        import requests  # type: ignore
+                        from PIL import Image  # type: ignore
 
-                    res = requests.get(program.img_url, timeout=5)
-                    if res.status_code != 200:
+                        res = requests.get(program.img_url, timeout=5)
+                        if res.status_code != 200:
+                            if DEBUG:
+                                print(f"Radiko: program image status {res.status_code}")
+                        elif self.current_station().id == station_id:
+                            self._program_image = Image.open(io.BytesIO(res.content)).convert("RGB")
+                    except Exception as exc:
                         if DEBUG:
-                            print(f"Radiko: program image status {res.status_code}")
-                        return
-                    if self.current_station().id != station_id:
-                        return
-                    self._program_image = Image.open(io.BytesIO(res.content)).convert("RGB")
-                except Exception as exc:
-                    if DEBUG:
-                        print(f"Radiko: program image fetch failed: {exc!r}")
+                            print(f"Radiko: program image fetch failed: {exc!r}")
+                if self._program_image is None and self._resolver:
+                    logo_url = self._resolver.station_logo_url(station_id)
+                    if logo_url and logo_url != self._station_image_url:
+                        self._station_image_url = logo_url
+                        try:
+                            import requests  # type: ignore
+                            from PIL import Image  # type: ignore
+
+                            res = requests.get(logo_url, timeout=5)
+                            if res.status_code != 200:
+                                if DEBUG:
+                                    print(f"Radiko: station logo status {res.status_code}")
+                                return
+                            if self.current_station().id != station_id:
+                                return
+                            self._station_image = Image.open(io.BytesIO(res.content)).convert("RGB")
+                        except Exception as exc:
+                            if DEBUG:
+                                print(f"Radiko: station logo fetch failed: {exc!r}")
             finally:
                 with self._program_lock:
                     self._program_fetching = False
@@ -1529,6 +1594,28 @@ def _fit_text(draw, font, text: str, max_width: int) -> str:
         if text_width(candidate) <= max_width:
             return candidate
     return "..."
+
+
+def _pick_station_logo_url(station_node: ET.Element) -> str:
+    for tag in ("logo_medium", "logo_large", "logo_small", "logo_xsmall", "banner"):
+        value = (station_node.findtext(tag) or "").strip()
+        if value:
+            return value
+    # Fallback: choose the largest width logo element.
+    best_url = ""
+    best_w = -1
+    for logo in station_node.findall("logo"):
+        url = (logo.text or "").strip()
+        if not url:
+            continue
+        try:
+            width = int(logo.attrib.get("width") or 0)
+        except ValueError:
+            width = 0
+        if width > best_w:
+            best_w = width
+            best_url = url
+    return best_url
 
 
 def _env_int(name: str, default: int) -> int:
