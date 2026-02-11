@@ -496,9 +496,11 @@ class RadikoResolver:
                     station_id = (st.findtext("id") or "").strip()
                     if not station_id:
                         continue
-                    logo = _pick_station_logo_url(st)
-                    if logo:
-                        self._station_logo_cache[station_id] = logo
+                logo = _pick_station_logo_url(st)
+                if logo:
+                    self._station_logo_cache[station_id] = logo
+                    if DEBUG:
+                        print(f"Radiko: station logo url {station_id} -> {logo}")
                 if self._station_logo_cache:
                     return self._station_logo_cache
             except Exception as exc:
@@ -1637,7 +1639,7 @@ def _fit_text(draw, font, text: str, max_width: int) -> str:
 
 
 def _pick_station_logo_url(station_node: ET.Element) -> str:
-    for tag in ("logo_medium", "logo_large", "logo_small", "logo_xsmall", "banner"):
+    for tag in ("logo_large", "logo_medium", "logo_small", "logo_xsmall", "banner"):
         value = (station_node.findtext(tag) or "").strip()
         if value:
             return value
