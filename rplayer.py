@@ -29,6 +29,7 @@ DEFAULT_BUTTON_Y_PIN = 24
 DEFAULT_REFRESH_SEC = float(os.getenv("RPLAYER_REFRESH_SEC", "1.0"))
 DEFAULT_LOADING_REFRESH_SEC = float(os.getenv("RPLAYER_LOADING_REFRESH_SEC", "0.05"))
 DEFAULT_PAUSED_REFRESH_SEC = float(os.getenv("RPLAYER_PAUSED_REFRESH_SEC", "0.5"))
+DEFAULT_LOADING_MIN_SEC = float(os.getenv("RPLAYER_LOADING_MIN_SEC", "2.5"))
 DEFAULT_METADATA_SEC = 10.0
 DEFAULT_PROGRAM_REFRESH_SEC = float(os.getenv("RPLAYER_PROGRAM_REFRESH_SEC", "3600"))
 DEFAULT_DOUBLE_CLICK_SEC = float(os.getenv("RPLAYER_DOUBLE_CLICK_SEC", "0.5"))
@@ -1237,7 +1238,8 @@ class Player:
             or self._program_title
             or (time.time() - self._loading_since) > 8.0
         ):
-            self._loading = False
+            if (time.time() - self._loading_since) >= DEFAULT_LOADING_MIN_SEC:
+                self._loading = False
         if self._paused:
             if not self._paused_drawn:
                 self._display.show("Playback OFF", "Press Y to resume", loading=False, force=True)
