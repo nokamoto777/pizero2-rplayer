@@ -213,6 +213,16 @@ class LineOutDisplay:
         except Exception:
             return
 
+    def clear(self) -> None:
+        if not self._display:
+            return
+        try:
+            assert self._draw and self._image
+            self._draw.rectangle((0, 0, self._width, self._height), fill=(0, 0, 0))
+            self._display.display(self._image)
+        except Exception:
+            return
+
     def _draw_loading_spinner(self, center: bool = False, size: int = 18) -> None:
         # Simple 12-step spinner (centered, overlay).
         try:
@@ -1262,6 +1272,10 @@ class Player:
         if DEBUG:
             print("Shutdown: poweroff")
         try:
+            self._display.clear()
+        except Exception:
+            pass
+        try:
             subprocess.Popen(["sudo", "shutdown", "-h", "now"])
         except Exception:
             pass
@@ -1552,11 +1566,16 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
 
-    while running:
-        player.tick()
-        time.sleep(DEFAULT_REFRESH_SEC)
-
-    player._stop_ffmpeg()
+    try:
+        while running:
+            player.tick()
+            time.sleep(DEFAULT_REFRESH_SEC)
+    finally:
+        player._stop_ffmpeg()
+        try:
+            display.clear()
+        except Exception:
+            pass
     return 0
 
 
