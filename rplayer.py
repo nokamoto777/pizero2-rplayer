@@ -1239,7 +1239,7 @@ class Player:
             return
         image_key = ""
         if self._mode == "radiko":
-            image_key = self._program_image_url or ""
+            image_key = self._program_image_url or self._station_image_url or ""
         elif self._mode == "world":
             image_key = self._world_image_url or ""
         state = (line1, line2, image_key, self._mode == "world")
