@@ -1169,6 +1169,8 @@ class Player:
         self._last_meta_at = 0.0
         if self._mode == "world":
             self._update_world_image()
+        elif self._mode == "radiko":
+            self._kick_station_logo_update()
 
     def tick(self) -> None:
         action = self._buttons.poll()
@@ -1320,6 +1322,44 @@ class Player:
             finally:
                 with self._program_lock:
                     self._program_fetching = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _kick_station_logo_update(self) -> None:
+        if not self._resolver:
+            return
+        station_id = self.current_station().id
+
+        def worker() -> None:
+            try:
+                logo_url = self._resolver.station_logo_url(station_id)
+                if not logo_url:
+                    if DEBUG:
+                        print(f"Radiko: station logo missing for {station_id}")
+                    return
+                if logo_url == self._station_image_url:
+                    return
+                self._station_image_url = logo_url
+                try:
+                    import requests  # type: ignore
+                    from PIL import Image  # type: ignore
+
+                    res = requests.get(logo_url, timeout=5)
+                    if res.status_code != 200:
+                        if DEBUG:
+                            print(f"Radiko: station logo status {res.status_code}")
+                        return
+                    if self.current_station().id != station_id:
+                        return
+                    self._station_image = Image.open(io.BytesIO(res.content)).convert("RGB")
+                    if DEBUG:
+                        print(f"Radiko: station logo loaded for {station_id}")
+                except Exception as exc:
+                    if DEBUG:
+                        print(f"Radiko: station logo fetch failed: {exc!r}")
+            except Exception as exc:
+                if DEBUG:
+                    print(f"Radiko: station logo error: {exc!r}")
 
         threading.Thread(target=worker, daemon=True).start()
 
