@@ -126,6 +126,7 @@ python3 rplayer.py
 3) If auth fails, test with a known stream URL first.
 4) Radiko HLS requires `X-Radiko-AuthToken` headers. The app uses `ffmpeg` to play
    HLS directly with headers because `mpd` cannot add custom headers.
+5) Stream URL and auth token are refreshed automatically (defaults: stream URL 24h, token 6h).
 
 ### ALSA output for radiko/world radio (ffmpeg)
 `ffmpeg` outputs directly to ALSA. Set the device if needed:
@@ -146,6 +147,10 @@ If auth1 returns 503, you can pass cookies from a browser session:
 ```bash
 RPLAYER_RADIKO_COOKIE="<Cookie header value>" python3 rplayer.py
 ```
+
+For stream URL/token refresh timing, you can tune:
+- `RPLAYER_RADIKO_STREAM_URL_TTL_SEC` (default: `86400`)
+- `RPLAYER_RADIKO_TOKEN_TTL_SEC` (default: `21600`)
 
 ### Auto-generate stations.json
 You can auto-generate the station list for your current area:
@@ -229,6 +234,7 @@ RPLAYER_FONT=/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc python3 rpla
   - You are inside Japan or using a valid radiko premium environment (radiko is geo-restricted).
   - System time/timezone are correct (`timedatectl`).
   - No VPN/proxy is interfering.
+  - `playlist_create_url` is probed with `GET` first, then fallback methods; `405` on POST alone is not always fatal.
   - As a fallback, set a known `stream_url` manually in `stations.json`.
 - If `auth token missing` appears, set radiko auth env vars or use the defaults:
   - `RPLAYER_RADIKO_AUTHKEY`
@@ -236,6 +242,8 @@ RPLAYER_FONT=/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc python3 rpla
   - `RPLAYER_RADIKO_DEVICE` / `RPLAYER_RADIKO_USER`
   - `RPLAYER_RADIKO_AUTH1_URLS` / `RPLAYER_RADIKO_AUTH2_URLS` (comma-separated override)
   - `RPLAYER_RADIKO_COOKIE` (copy cookies from a browser session if auth1 returns 503)
+  - `RPLAYER_RADIKO_TOKEN_TTL_SEC`
+  - `RPLAYER_RADIKO_STREAM_URL_TTL_SEC`
 - Verify buttons with gpiozero:
 ```bash
 python3 - <<'PY'

@@ -53,6 +53,8 @@ DEFAULT_RADIKO_AUTH2_URLS = os.getenv(
     "RPLAYER_RADIKO_AUTH2_URLS",
     "https://radiko.jp/v2/api/auth2,https://radiko.jp/v2/api/auth2_fms,http://radiko.jp/v2/api/auth2,http://radiko.jp/v2/api/auth2_fms",
 )
+DEFAULT_RADIKO_STREAM_URL_TTL_SEC = float(os.getenv("RPLAYER_RADIKO_STREAM_URL_TTL_SEC", "86400"))
+DEFAULT_RADIKO_TOKEN_TTL_SEC = float(os.getenv("RPLAYER_RADIKO_TOKEN_TTL_SEC", "21600"))
 RADIKO_LOGO_FALLBACK = os.getenv("RPLAYER_RADIKO_LOGO_FALLBACK", "0") == "1"
 
 
@@ -341,9 +343,11 @@ class RadikoResolver:
         self._station_map: Dict[str, object] = {}
         self._selected_id: Optional[str] = None
         self._auth_token: Optional[str] = None
+        self._auth_token_at: float = 0.0
         self._area_id: Optional[str] = None
         self._auth_headers: Dict[str, str] = {}
         self._stream_url_cache: Dict[str, str] = {}
+        self._stream_url_cache_at: Dict[str, float] = {}
         self._program_cache: Dict[str, Tuple[float, str, List[ProgramInfo]]] = {}
         self._station_logo_cache: Dict[str, str] = {}
         self._init_client()
@@ -379,27 +383,44 @@ class RadikoResolver:
             return None
         return str(getattr(station, "name", "")).strip() or None
 
-    def auth_token(self) -> Optional[str]:
-        if self._auth_token:
+    def auth_token(self, force: bool = False) -> Optional[str]:
+        now = time.time()
+        if (
+            self._auth_token
+            and not force
+            and (now - self._auth_token_at) < DEFAULT_RADIKO_TOKEN_TTL_SEC
+        ):
             return self._auth_token
-        token = self._get_token_from_attrs()
-        if token:
-            self._auth_token = token
-            return token
-        token = self._get_token_from_methods()
-        if token:
-            self._auth_token = token
-            return token
+
+        if not force:
+            token = self._get_token_from_attrs()
+            if token:
+                self._auth_token = token
+                self._auth_token_at = now
+                return token
+            token = self._get_token_from_methods()
+            if token:
+                self._auth_token = token
+                self._auth_token_at = now
+                return token
+
+        prev = self._auth_token
         token = self._auth_with_radiko()
         if token:
             self._auth_token = token
+            self._auth_token_at = now
+            return token
+        if prev and DEBUG:
+            print("Radiko: auth refresh failed, keep previous token")
+        self._auth_token = prev
         return self._auth_token
 
     def auth_headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = dict(self._auth_headers)
         token = self.auth_token()
-        if token and "X-Radiko-Authtoken" not in headers:
+        if token:
             headers["X-Radiko-Authtoken"] = token
+            headers["X-Radiko-AuthToken"] = token
         return headers
 
     def current_program(self, station_id: str) -> Optional[ProgramInfo]:
@@ -518,14 +539,21 @@ class RadikoResolver:
     def stream_url(self, station_id: str) -> Optional[str]:
         if not self._client:
             return None
+        now = time.time()
         cached = self._stream_url_cache.get(station_id)
-        if cached and "medialist" not in cached:
+        cached_at = self._stream_url_cache_at.get(station_id, 0.0)
+        if (
+            cached
+            and "medialist" not in cached
+            and (now - cached_at) < DEFAULT_RADIKO_STREAM_URL_TTL_SEC
+        ):
             return cached
 
         url = self._stream_url_from_xml(station_id)
         if url:
             if "medialist" not in url:
                 self._stream_url_cache[station_id] = url
+                self._stream_url_cache_at[station_id] = now
             if DEBUG:
                 print(f"Radiko: stream_url via xml -> {url}")
             return url
@@ -801,29 +829,42 @@ class RadikoResolver:
             import requests  # type: ignore
         except Exception:
             return None
+
+        def _do_request(
+            method: str, url: str, req_headers: Dict[str, str], form: Optional[Dict[str, str]] = None
+        ):
+            if method == "GET":
+                return requests.get(url, headers=req_headers, timeout=5)
+            post_headers = {**req_headers, "Content-Type": "application/x-www-form-urlencoded"}
+            return requests.post(url, headers=post_headers, data=form or {}, timeout=5)
+
         try:
-            post_headers = {**headers, "Content-Type": "application/x-www-form-urlencoded"}
             if DEBUG:
-                print(f"Radiko: playlist POST {base_url} params={params}")
-            # Try POST with form data first (radiko expects parameters in body).
-            res = requests.post(
-                base_url,
-                headers=post_headers,
-                data=params,
-                timeout=5,
-            )
-            if res.status_code != 200:
+                print(f"Radiko: playlist probe {base_url} params={params}")
+            attempts: List[Tuple[str, str, Optional[Dict[str, str]]]] = [
+                ("GET", base_url, None),
+                ("POST", base_url, params),
+                ("GET", self._with_query(base_url, params), None),
+            ]
+            refreshed = False
+            res = None
+            for method, url, form in attempts:
+                res = _do_request(method, url, headers, form)
+                if res.status_code == 403 and not refreshed:
+                    token = self.auth_token(force=True)
+                    if token:
+                        headers = dict(headers)
+                        headers["X-Radiko-Authtoken"] = token
+                        headers["X-Radiko-AuthToken"] = token
+                        refreshed = True
+                        res = _do_request(method, url, headers, form)
+                if res.status_code == 200:
+                    break
                 if DEBUG:
-                    print(f"Radiko: playlist status {res.status_code} for {base_url}")
+                    print(f"Radiko: playlist status {res.status_code} for {url}")
                     print(f"Radiko: playlist body {res.text[:200]!r}")
-                # Fallback: GET with query
-                url = self._with_query(base_url, params)
-                res = requests.get(url, headers=headers, timeout=5)
-                if res.status_code != 200:
-                    if DEBUG:
-                        print(f"Radiko: playlist status {res.status_code} for {url}")
-                        print(f"Radiko: playlist body {res.text[:200]!r}")
-                    return None
+            if not res or res.status_code != 200:
+                return None
             body = res.text or ""
             match = re.search(r"https?://[^\s<>\"]+\.m3u8", body)
             if match:
@@ -1067,6 +1108,7 @@ class Player:
         self._shutdown_confirm_at: Optional[float] = None
         self._state_path = os.getenv("RPLAYER_STATE", "state.json")
         self._stream_cache: Dict[str, str] = {}
+        self._stream_cache_at: Dict[str, float] = {}
         self._title_cache: Dict[str, Tuple[str, float]] = {}
         self._ffmpeg: Optional[subprocess.Popen] = None
         self._radiko_token: Optional[str] = None
@@ -1138,14 +1180,21 @@ class Player:
         stream_url = station.stream_url
         self._display.show(label, "Loading...", loading=True, force=False)
         if not stream_url and self._resolver:
+            self._load_radiko_token()
             cached = self._stream_cache.get(station.id)
-            if cached and "medialist" not in cached:
+            cached_at = self._stream_cache_at.get(station.id, 0.0)
+            if (
+                cached
+                and "medialist" not in cached
+                and (time.time() - cached_at) < DEFAULT_RADIKO_STREAM_URL_TTL_SEC
+            ):
                 stream_url = cached
             if not stream_url:
                 stream_url = self._resolver.stream_url(station.id)
                 if stream_url:
                     if "medialist" not in stream_url:
                         self._stream_cache[station.id] = stream_url
+                        self._stream_cache_at[station.id] = time.time()
 
         if not stream_url:
             self._display.show(label, "stream_url missing")
