@@ -6,8 +6,8 @@ Radiko player for Raspberry Pi Zero 2 + PIMORONI Line Out (64-bit Raspberry Pi O
 - Python-based radiko player
 - Line Out display shows current station and song title while playing
 - Display shows current program image under the text (updates on program/station change)
-- A/B buttons change station
-- X button toggles Radiko / World Radio mode
+- A/B buttons change station (Apple Music mode: change genre)
+- X button toggles Radiko / World Radio / Apple Music mode
 - Y single-click toggles playback on/off
 - Y double-click opens shutdown confirm (press X to shutdown)
 - Fresh OS install (no prior setup)
@@ -22,20 +22,23 @@ Components:
 - **Audio playback**:
   - Radiko: `ffmpeg` plays HLS with auth headers.
   - World radio: `ffmpeg` plays the stream directly.
+  - Apple Music: `ffmpeg` plays preview streams from Apple/iTunes search API.
   - Manual `stream_url`: `mpd/mpc` can be used.
 - **Station control**: Python app manages station list and playback.
 - **Metadata**: Python app polls radiko program info and updates the display.
 - **Program image**:
   - Radiko: program image from schedule.
   - World radio: station favicon when available.
-- **UI**: A/B buttons -> previous/next station.
-- **Mode switch**: X toggles Radiko / World Radio.
+- **UI**:
+  - Radiko/World: A/B -> previous/next station.
+  - Apple Music: A/B -> previous/next genre (a random track in that genre is selected).
+- **Mode switch**: X toggles Radiko / World Radio / Apple Music.
 - **Shutdown**: Y double-click -> confirm, then X to shutdown.
 - **Playback toggle**: Y single-click -> ON/OFF (screen dim when OFF).
 - **Display**: Show station name + current track or program title, plus images.
 
 Data flow:
-1) User presses A/B -> Python selects station (or random in world mode).
+1) User presses A/B -> Python selects station (or genre in Apple Music mode).
 2) Python resolves stream URL if needed.
 3) Python starts playback (ffmpeg or mpd).
 4) Python polls metadata + program image.
@@ -215,6 +218,24 @@ A/B navigates random stations with history (A goes back to the previously played
 Station image (favicon) is shown under the text when available.
 World radio is played with `ffmpeg` directly (no mpd needed).
 
+### Apple Music mode
+Apple Music mode uses Apple/iTunes Search API preview URLs.
+A/B changes genre, then the app picks a random preview track in that genre.
+Default genres:
+- `J-Pop`
+- `Pop`
+- `Rock`
+- `Jazz`
+- `Classical`
+- `Hip-Hop`
+- `Anime`
+
+Apple Music settings:
+- `RPLAYER_APPLE_MUSIC_GENRES` (comma-separated genre list)
+- `RPLAYER_APPLE_MUSIC_COUNTRY` (default: `JP`)
+- `RPLAYER_APPLE_MUSIC_LIMIT` (default: `50`)
+- `RPLAYER_APPLE_MUSIC_CACHE_SEC` (default: `1800`)
+
 ### Last station resume
 The app saves the last station/mode in `state.json` (override with `RPLAYER_STATE`).
 
@@ -295,14 +316,14 @@ If `stream_url` is empty, the app will try to resolve it via `radiko.py`.
 
 ### rplayer.py (core responsibilities)
 - Load stations list
-- Track current station/mode (radiko/world) + history
+- Track current station/mode (radiko/world/apple) + history
 - Button handlers:
-  - A: previous station
-  - B: next station
+  - A/B: previous/next station (radiko/world)
+  - A/B: previous/next genre (apple)
   - X: mode toggle
   - Y: double-click shutdown confirm
 - Resolve radiko stream URL and program schedule
-- Play streams via ffmpeg (radiko/world) or mpd (manual URL)
+- Play streams via ffmpeg (radiko/world/apple) or mpd (manual URL)
 - Poll metadata + program images
 - Update Line Out display with:
   - Station name

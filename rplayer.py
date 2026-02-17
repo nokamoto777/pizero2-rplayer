@@ -55,6 +55,16 @@ DEFAULT_RADIKO_AUTH2_URLS = os.getenv(
 )
 DEFAULT_RADIKO_STREAM_URL_TTL_SEC = float(os.getenv("RPLAYER_RADIKO_STREAM_URL_TTL_SEC", "86400"))
 DEFAULT_RADIKO_TOKEN_TTL_SEC = float(os.getenv("RPLAYER_RADIKO_TOKEN_TTL_SEC", "21600"))
+DEFAULT_APPLE_MUSIC_COUNTRY = os.getenv("RPLAYER_APPLE_MUSIC_COUNTRY", "JP")
+try:
+    DEFAULT_APPLE_MUSIC_LIMIT = int(os.getenv("RPLAYER_APPLE_MUSIC_LIMIT", "50"))
+except ValueError:
+    DEFAULT_APPLE_MUSIC_LIMIT = 50
+DEFAULT_APPLE_MUSIC_CACHE_SEC = float(os.getenv("RPLAYER_APPLE_MUSIC_CACHE_SEC", "1800"))
+DEFAULT_APPLE_MUSIC_GENRES = os.getenv(
+    "RPLAYER_APPLE_MUSIC_GENRES",
+    "J-Pop,Pop,Rock,Jazz,Classical,Hip-Hop,Anime",
+)
 RADIKO_LOGO_FALLBACK = os.getenv("RPLAYER_RADIKO_LOGO_FALLBACK", "0") == "1"
 
 
@@ -72,6 +82,12 @@ class ProgramInfo:
     img_url: str
     ft: datetime
     to: datetime
+
+
+@dataclass
+class AppleTrack:
+    station: Station
+    subtitle: str
 
 
 class ConsoleDisplay:
@@ -1070,6 +1086,86 @@ class WorldRadioResolver:
             return self._cache
 
 
+class AppleMusicResolver:
+    def __init__(self) -> None:
+        self._country = DEFAULT_APPLE_MUSIC_COUNTRY
+        self._genres = [g.strip() for g in DEFAULT_APPLE_MUSIC_GENRES.split(",") if g.strip()]
+        if not self._genres:
+            self._genres = ["Pop"]
+        self._cache: Dict[str, Tuple[float, List[AppleTrack]]] = {}
+
+    def genres(self) -> List[str]:
+        return list(self._genres)
+
+    def random_track(self, genre: str) -> Optional[AppleTrack]:
+        tracks = self._get_tracks(genre)
+        if not tracks:
+            return None
+        return random.choice(tracks)
+
+    def _get_tracks(self, genre: str) -> List[AppleTrack]:
+        now = time.time()
+        cached = self._cache.get(genre)
+        if cached and (now - cached[0]) < DEFAULT_APPLE_MUSIC_CACHE_SEC:
+            return cached[1]
+        tracks = self._fetch_tracks(genre)
+        if tracks:
+            self._cache[genre] = (now, tracks)
+            return tracks
+        if cached:
+            return cached[1]
+        return []
+
+    def _fetch_tracks(self, genre: str) -> List[AppleTrack]:
+        try:
+            import requests  # type: ignore
+        except Exception:
+            return []
+        url = "https://itunes.apple.com/search"
+        params = {
+            "term": genre,
+            "media": "music",
+            "entity": "song",
+            "country": self._country,
+            "limit": str(DEFAULT_APPLE_MUSIC_LIMIT),
+        }
+        try:
+            res = requests.get(url, params=params, timeout=10)
+            if res.status_code != 200:
+                if DEBUG:
+                    print(f"AppleMusic: status {res.status_code} ({url})")
+                return []
+            raw = res.json()
+            results = raw.get("results") if isinstance(raw, dict) else []
+            tracks: List[AppleTrack] = []
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                preview = str(item.get("previewUrl") or "").strip()
+                if not preview:
+                    continue
+                track_name = str(item.get("trackName") or "").strip()
+                artist_name = str(item.get("artistName") or "").strip()
+                if not track_name:
+                    continue
+                artwork = str(item.get("artworkUrl100") or item.get("artworkUrl60") or "").strip()
+                station = Station(
+                    id=str(item.get("trackId") or f"{track_name}:{artist_name}"),
+                    name=track_name,
+                    stream_url=preview,
+                    image_url=artwork,
+                )
+                subtitle = artist_name or str(item.get("collectionName") or "").strip()
+                tracks.append(AppleTrack(station=station, subtitle=subtitle))
+            if DEBUG:
+                print(f"AppleMusic: fetched {len(tracks)} tracks for genre={genre}")
+            return tracks
+        except Exception as exc:
+            if DEBUG:
+                print(f"AppleMusic: fetch failed for genre={genre}: {exc!r}")
+            return []
+
+
 class Player:
     def __init__(
         self,
@@ -1085,6 +1181,9 @@ class Player:
         self._buttons = buttons
         self._resolver = resolver if resolver and resolver.available() else None
         self._world = WorldRadioResolver()
+        self._apple = AppleMusicResolver()
+        self._apple_genres = self._apple.genres()
+        self._apple_genre_index = 0
         self._index = 0
         self._mode = "radiko"
         self._last_meta = ""
@@ -1101,6 +1200,10 @@ class Player:
         self._world_index = -1
         self._world_image = None
         self._world_image_url = ""
+        self._apple_station: Optional[Station] = None
+        self._apple_meta = ""
+        self._apple_image = None
+        self._apple_image_url = ""
         self._program_fetching = False
         self._program_lock = threading.Lock()
         self._loading = False
@@ -1114,7 +1217,7 @@ class Player:
         self._radiko_token: Optional[str] = None
         self._paused = False
         self._paused_drawn = False
-        self._last_render_state: Optional[Tuple[str, str, str, bool]] = None
+        self._last_render_state: Optional[Tuple[str, str, str, str, str]] = None
         self._image_rev = 0
         self._hydrate_station_names()
         self._load_radiko_token()
@@ -1133,11 +1236,16 @@ class Player:
     def current_station(self) -> Station:
         if self._mode == "world" and self._world_station:
             return self._world_station
+        if self._mode == "apple" and self._apple_station:
+            return self._apple_station
         return self._stations[self._index]
 
     def next_station(self) -> None:
         if self._mode == "world":
             self._world_next()
+            return
+        if self._mode == "apple":
+            self._apple_next_genre()
             return
         if len(self._stations) < 2:
             self._display.show(self.current_station().name or self.current_station().id, "Only one station")
@@ -1153,6 +1261,9 @@ class Player:
         if self._mode == "world":
             self._world_prev()
             return
+        if self._mode == "apple":
+            self._apple_prev_genre()
+            return
         if len(self._stations) < 2:
             self._display.show(self.current_station().name or self.current_station().id, "Only one station")
             return
@@ -1164,6 +1275,8 @@ class Player:
         self._save_state()
 
     def _start_current(self) -> None:
+        if self._mode == "apple" and not self._apple_station:
+            self._apple_pick_track()
         station = self.current_station()
         label = station.name or station.id
         self._program_title = ""
@@ -1175,11 +1288,13 @@ class Player:
         self._last_program_at = 0.0
         self._world_image = None
         self._world_image_url = ""
+        self._apple_image = None
+        self._apple_image_url = ""
         self._loading = True
         self._loading_since = time.time()
         stream_url = station.stream_url
         self._display.show(label, "Loading...", loading=True, force=False)
-        if not stream_url and self._resolver:
+        if not stream_url and self._mode == "radiko" and self._resolver:
             self._load_radiko_token()
             cached = self._stream_cache.get(station.id)
             cached_at = self._stream_cache_at.get(station.id, 0.0)
@@ -1213,7 +1328,7 @@ class Player:
             if DEBUG:
                 print("Radiko: auth token missing, cannot play HLS")
             return
-        if self._mode == "world":
+        if self._mode in ("world", "apple"):
             self._start_ffmpeg_plain(stream_url)
         elif self._radiko_token and (stream_url.endswith(".m3u8") or is_radiko_stream):
             self._start_ffmpeg(stream_url, self._radiko_token)
@@ -1224,6 +1339,8 @@ class Player:
         self._last_meta_at = 0.0
         if self._mode == "world":
             self._update_world_image()
+        elif self._mode == "apple":
+            self._update_apple_image()
         elif self._mode == "radiko" and RADIKO_LOGO_FALLBACK:
             self._kick_station_logo_update()
 
@@ -1279,6 +1396,11 @@ class Player:
             image = self._program_image
             if image is None and RADIKO_LOGO_FALLBACK:
                 image = self._station_image
+        elif self._mode == "apple":
+            line1 = f"AppleMusic [{self._apple_current_genre()}]"
+            track_title = current.name if self._apple_station else ""
+            line2 = " - ".join(v for v in (track_title, self._apple_meta) if v) or "Apple Music"
+            image = self._apple_image
         else:
             line2 = self._last_meta or "World Radio"
             image = self._world_image
@@ -1302,7 +1424,9 @@ class Player:
                 image_key = self._station_image_url or ""
         elif self._mode == "world":
             image_key = self._world_image_url or ""
-        state = (line1, line2, image_key, self._mode == "world", str(self._image_rev))
+        elif self._mode == "apple":
+            image_key = self._apple_image_url or ""
+        state = (line1, line2, image_key, self._mode, str(self._image_rev))
         changed = state != self._last_render_state
         if not self._loading and not changed:
             return
@@ -1327,6 +1451,8 @@ class Player:
             if title:
                 self._title_cache[station.id] = (title, time.time())
                 return title
+        if self._mode == "apple":
+            return " - ".join(v for v in (station.name, self._apple_meta) if v)
         return get_mpd_title()
 
     def _kick_program_update(self) -> None:
@@ -1443,6 +1569,10 @@ class Player:
             self._mode = "world"
             if not self._world_station:
                 self._world_next()
+        elif self._mode == "world":
+            self._mode = "apple"
+            if not self._apple_station:
+                self._apple_pick_track()
         else:
             self._mode = "radiko"
         if DEBUG:
@@ -1502,6 +1632,48 @@ class Player:
         # If no previous history, pick a new random station.
         self._world_next()
 
+    def _apple_current_genre(self) -> str:
+        if not self._apple_genres:
+            return "Pop"
+        self._apple_genre_index %= len(self._apple_genres)
+        return self._apple_genres[self._apple_genre_index]
+
+    def _apple_pick_track(self) -> None:
+        genre = self._apple_current_genre()
+        track = self._apple.random_track(genre)
+        if not track:
+            self._apple_station = Station(
+                id=f"apple:{genre}",
+                name=f"{genre} (no track)",
+                stream_url="",
+                image_url="",
+            )
+            self._apple_meta = "No preview available"
+            return
+        self._apple_station = track.station
+        self._apple_meta = track.subtitle
+        if DEBUG:
+            print(
+                "AppleMusic:",
+                f"genre={genre}",
+                f"title={self._apple_station.name}",
+                f"artist={self._apple_meta}",
+            )
+
+    def _apple_next_genre(self) -> None:
+        if self._apple_genres:
+            self._apple_genre_index = (self._apple_genre_index + 1) % len(self._apple_genres)
+        self._apple_pick_track()
+        self._start_current()
+        self._save_state()
+
+    def _apple_prev_genre(self) -> None:
+        if self._apple_genres:
+            self._apple_genre_index = (self._apple_genre_index - 1) % len(self._apple_genres)
+        self._apple_pick_track()
+        self._start_current()
+        self._save_state()
+
     def _update_world_image(self) -> None:
         station = self.current_station()
         if not station.image_url:
@@ -1523,6 +1695,27 @@ class Player:
             if DEBUG:
                 print(f"WorldRadio: image fetch failed: {exc!r}")
 
+    def _update_apple_image(self) -> None:
+        station = self.current_station()
+        if not station.image_url:
+            return
+        if station.image_url == self._apple_image_url:
+            return
+        self._apple_image_url = station.image_url
+        try:
+            import requests  # type: ignore
+            from PIL import Image  # type: ignore
+
+            res = requests.get(station.image_url, timeout=5)
+            if res.status_code != 200:
+                if DEBUG:
+                    print(f"AppleMusic: image status {res.status_code}")
+                return
+            self._apple_image = Image.open(io.BytesIO(res.content)).convert("RGB")
+        except Exception as exc:
+            if DEBUG:
+                print(f"AppleMusic: image fetch failed: {exc!r}")
+
     def _load_state(self) -> None:
         try:
             with open(self._state_path, "r", encoding="utf-8") as f:
@@ -1530,7 +1723,7 @@ class Player:
         except Exception:
             return
         mode = str(data.get("mode") or "").strip()
-        if mode in ("radiko", "world"):
+        if mode in ("radiko", "world", "apple"):
             self._mode = mode
         if self._mode == "radiko":
             station_id = str(data.get("station_id") or "").strip()
@@ -1539,7 +1732,7 @@ class Player:
                     if st.id == station_id:
                         self._index = idx
                         break
-        else:
+        elif self._mode == "world":
             name = str(data.get("world_name") or "").strip()
             url = str(data.get("world_url") or "").strip()
             image_url = str(data.get("world_image_url") or "").strip()
@@ -1550,6 +1743,19 @@ class Player:
             if self._world_station:
                 self._world_history = [self._world_station]
                 self._world_index = 0
+        else:
+            genre = str(data.get("apple_genre") or "").strip()
+            if genre and genre in self._apple_genres:
+                self._apple_genre_index = self._apple_genres.index(genre)
+            name = str(data.get("apple_name") or "").strip()
+            url = str(data.get("apple_url") or "").strip()
+            image_url = str(data.get("apple_image_url") or "").strip()
+            meta = str(data.get("apple_meta") or "").strip()
+            if name and url:
+                self._apple_station = Station(id=name, name=name, stream_url=url, image_url=image_url)
+                self._apple_meta = meta
+            if not self._apple_station:
+                self._apple_pick_track()
         self._start_current()
 
     def _save_state(self) -> None:
@@ -1557,11 +1763,18 @@ class Player:
             data = {"mode": self._mode}
             if self._mode == "radiko":
                 data["station_id"] = self.current_station().id
-            else:
+            elif self._mode == "world":
                 if self._world_station:
                     data["world_name"] = self._world_station.name
                     data["world_url"] = self._world_station.stream_url
                     data["world_image_url"] = self._world_station.image_url
+            else:
+                data["apple_genre"] = self._apple_current_genre()
+                if self._apple_station:
+                    data["apple_name"] = self._apple_station.name
+                    data["apple_url"] = self._apple_station.stream_url
+                    data["apple_image_url"] = self._apple_station.image_url
+                data["apple_meta"] = self._apple_meta
             with open(self._state_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
