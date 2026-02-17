@@ -1894,7 +1894,8 @@ def _fit_image(image, max_width: int, max_height: int):
     width, height = image.size
     if width == 0 or height == 0:
         return image
-    scale = min(max_width / width, max_height / height, 1.0)
+    # Upscale small artwork (e.g. Apple Music 100x100) so the image area is used fully.
+    scale = min(max_width / width, max_height / height)
     new_w = max(1, int(width * scale))
     new_h = max(1, int(height * scale))
     if new_w == width and new_h == height:
