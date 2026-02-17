@@ -1404,6 +1404,7 @@ class Player:
         else:
             line2 = self._last_meta or "World Radio"
             image = self._world_image
+        was_loading = self._loading
         if self._loading and (
             self._last_meta
             or self._program_title
@@ -1411,6 +1412,7 @@ class Player:
         ):
             if (time.time() - self._loading_since) >= DEFAULT_LOADING_MIN_SEC:
                 self._loading = False
+        loading_ended = was_loading and not self._loading
         if self._paused:
             if not self._paused_drawn:
                 self._display.show("Playback OFF", "Press Y to resume", loading=False, force=True)
@@ -1428,9 +1430,12 @@ class Player:
             image_key = self._apple_image_url or ""
         state = (line1, line2, image_key, self._mode, str(self._image_rev))
         changed = state != self._last_render_state
-        if not self._loading and not changed:
+        if not self._loading and not changed and not loading_ended:
             return
-        self._display.show(line1, line2, image, loading=self._loading, force=changed)
+        # Force redraw while loading to avoid cumulative dim/spinner artifacts,
+        # and once more when loading ends to clear the spinner overlay.
+        force_redraw = changed or self._loading or loading_ended
+        self._display.show(line1, line2, image, loading=self._loading, force=force_redraw)
         if changed:
             self._last_render_state = state
 
