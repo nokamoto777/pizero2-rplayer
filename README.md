@@ -1,5 +1,6 @@
 # pizero2-rplayer
 Radiko player for Raspberry Pi Zero 2 + PIMORONI Line Out (64-bit Raspberry Pi OS trixie).
+![Image](https://github.com/user-attachments/assets/6a63c50f-9e12-47a3-a5b6-dfa225923890)
 
 ## Goal
 - Raspberry Pi Zero 2 + PIMORONI Line Out
