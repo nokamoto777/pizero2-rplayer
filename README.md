@@ -88,6 +88,19 @@ Optional (if you are not using onboard audio):
 ```
 dtparam=audio=off
 ```
+**Note (Bookworm / Trixie):**
+Do not use `dtparam=spi=on`. Pimoroni Display HAT reuses GPIO 9 (SPI0 MISO) as the DC pin. Using `dtoverlay=spi0-2cs,no_miso` is required to prevent `libgpiod` conflict errors (`ValueError: (22, 'Invalid argument')`).
+
+```ini
+ [all]
+-# Display & Audio settings
+-dtparam=spi=on
++# SPI configuration (release GPIO 9 MISO for LCD DC pin)
++dtoverlay=spi0-2cs,no_miso
+ dtoverlay=hifiberry-dac
+-gpio=25=op,dh
++gpio=13=op,dh
+```
 
 4) Audio device config (Line Out):
 - Ensure Line Out is the default audio output.
